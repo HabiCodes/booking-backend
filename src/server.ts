@@ -5,7 +5,7 @@ import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import { config } from './config';
-import { getPool, closePool } from './db/pool';
+import { getPool, closePool, runMigrations } from './db/pool';
 import { notFoundHandler, errorHandler } from './middleware/errorHandler';
 import { initSocketServer, getIo, broadcastBookingCount } from './sockets';
 import { createServer } from 'http';
@@ -77,9 +77,15 @@ async function start() {
   try {
     // Verify DB connection
     const pool = getPool();
+
     const conn = await pool.connect();
     conn.release();
+
     logger.info('Database connection verified');
+
+    await runMigrations();
+
+    logger.info('Database migrations completed');
 
     // Init Socket.IO
     initSocketServer(server);
