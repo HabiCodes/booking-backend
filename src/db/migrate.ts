@@ -1,22 +1,26 @@
 /**
- * Database Migration Runner
+ * Database Migration Runner — CLI entrypoint
  *
  * Run with:  npm run db:migrate
  *
- * Applies the PostgreSQL schema defined in pool.ts
- * to the connected database. Safe to re-run (CREATE TABLE IF NOT EXISTS).
+ * Applies all pending migrations from migrations/versions/*.sql
+ * Idempotent — re-running is a no-op once everything is current.
  *
  * Excluded from `tsc -p tsconfig.json` build (see tsconfig.json exclude).
  */
-import { getPool, runMigrations, closePool } from '../db/pool';
+
+import { getPool, closePool } from './pool';
+import { runMigrations } from './migrations';
 import { logger } from '../utils/logger';
 
 async function main(): Promise<void> {
   try {
     const pool = getPool();
-    logger.info('Running PostgreSQL migrations...');
-    await runMigrations();
-    logger.info('All migrations applied successfully.');
+    // Force pool init by issuing a no-op query
+    await pool.query('SELECT 1');
+    logger.info('Running PostgreSQL migrations…');
+    const applied = await runMigrations();
+    logger.info(`Migrations complete — ${applied.length} applied this run.`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`Migration failed: ${message}`);

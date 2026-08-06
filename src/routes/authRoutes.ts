@@ -1,9 +1,45 @@
 import { Router } from 'express';
-import { register, login } from '../controllers/authController';
+import {
+  register,
+  login,
+  registerEnhanced,
+  loginEnhanced,
+  verifyEmail,
+  resendVerification,
+  refreshToken,
+  logout,
+  logoutAll,
+  forgotPassword,
+  resetPassword,
+  changePassword,
+  getMySessions,
+  revokeMySession,
+} from '../controllers/authController';
+import { authMiddleware } from '../middleware/auth';
+import { authRateLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 
+// ── Legacy endpoints (kept for backward compat) ──────────────────────────────
 router.post('/register', register);
 router.post('/login', login);
+
+// ── Enhanced endpoints ──────────────────────────────────────────────────────
+router.post('/register-enhanced', authRateLimiter, registerEnhanced);
+router.post('/login-enhanced', authRateLimiter, loginEnhanced);
+router.post('/verify-email', verifyEmail);
+router.post('/resend-verification', authRateLimiter, resendVerification);
+router.post('/refresh-token', refreshToken);
+router.post('/logout', logout);
+router.post('/logout-all', authMiddleware, logoutAll);
+
+router.post('/forgot-password', authRateLimiter, forgotPassword);
+router.post('/reset-password', resetPassword);
+
+router.post('/change-password', authMiddleware, changePassword);
+
+// Sessions
+router.get('/sessions', authMiddleware, getMySessions);
+router.post('/sessions/revoke', authMiddleware, revokeMySession);
 
 export default router;

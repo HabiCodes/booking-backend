@@ -1,68 +1,148 @@
-import { v4 as uuidv4 } from 'uuid';
-import { getPool, withTransaction } from '../db/pool';
+import { withTransaction } from '../db/pool';
 import { eventRepository } from '../repositories/eventRepository';
 import { userRepository } from '../repositories/userRepository';
 import { bookingRepository } from '../repositories/bookingRepository';
 import { AppError } from '../middleware/errorHandler';
-import { type BookingRow, AttendeeInput } from '../types';
-
-const MAX_TICKETS_PER_USER_VAL = 10;
+import { config } from '../config';
+import type { BookingRow, AttendeeInput } from '../types';
 
 export class BookingService {
+  /**
+   * Create a booking atomically:
+   *   1. Lock the event row (FOR UPDATE)
+   *   2. Reserve capacity from `events.remaining_capacity`
+   *   3. Insert the booking row
+   *   4. Insert individual tickets (one at a time with immediate RETURNING)
+   *   5. Commit → all-or-nothing
+   */
   async createBooking(userId: number, eventId: number, attendees: AttendeeInput[]) {
     const ticketCount = attendees.length;
 
+    // ── Rule: at least 1 ticket ───────────────────────────────────────────────
     if (ticketCount < 1) throw new AppError('At least 1 ticket required', 400);
-    if (ticketCount > MAX_TICKETS_PER_USER_VAL) {
+
+    // ── Rule: max tickets per booking ────────────────────────────────────────
+    const maxPerBooking = config.bookings.maxTicketsPerBooking;
+    if (ticketCount > maxPerBooking) {
       throw new AppError(
-        `You can book at most ${MAX_TICKETS_PER_USER_VAL} tickets at once`,
+        `You can book at most ${maxPerBooking} tickets at once`,
         400
       );
     }
 
+    // ── Event existence ──────────────────────────────────────────────────────
     const event = await eventRepository.getEventById(eventId);
     if (!event) throw new AppError('Event not found', 404);
+    if (event.status !== 'published') throw new AppError('This event is not open for booking', 400);
 
-    const existingCount = await userRepository.getUserTicketCount(userId, eventId);
-    if (existingCount + ticketCount > MAX_TICKETS_PER_USER_VAL) {
+    // ── Rule: per-user-per-event cap ─────────────────────────────────────────
+    const maxPerUser = config.bookings.maxTicketsPerUserPerEvent;
+    const existingCount = await bookingRepository.getUserBookedCount(userId, eventId);
+    if (existingCount + ticketCount > maxPerUser) {
       throw new AppError(
-        `Maximum booking limit reached. You already have ${existingCount} ticket(s). Limit is ${MAX_TICKETS_PER_USER_VAL} per user.`,
+        `Booking limit reached. You already have ${existingCount} ticket(s) for this event. Limit is ${maxPerUser} per user.`,
         403
       );
     }
 
-    const bookingId = await withTransaction(async (client) => {
-      // Lock the event row and read capacity
-      const capResult = await client.query(
-        'SELECT capacity FROM events WHERE id = $1 FOR UPDATE',
-        [eventId]
-      );
-      const capRow = capResult.rows[0];
-      if (!capRow) throw new AppError('Event not found', 404);
-      const capacity = Number(capRow.capacity);
+    // ── Rule: cancellation window check ──────────────────────────────────────
+    if (event.cancellable_until && new Date() > new Date(event.cancellable_until)) {
+      throw new AppError('This event has passed its cancellation window and cannot be booked with refund.', 400);
+    }
 
-      // Calculate current booked tickets
-      const bookedResult = await client.query(
-        'SELECT COALESCE(SUM(ticket_count), 0) AS total FROM bookings WHERE event_id = $1',
-        [eventId]
-      );
-      const bookedRow = bookedResult.rows[0];
-      const currentBooked = Number(bookedRow?.total ?? 0);
-
-      if (currentBooked + ticketCount > capacity) {
-        throw new AppError('Not enough tickets available', 409);
+    // ── Atomic booking + capacity reservation ────────────────────────────────
+    const { booking, tickets } = await withTransaction(async (client) => {
+      // Lock event row and atomically reserve capacity
+      const newRemaining = await bookingRepository.reserveCapacity(client, eventId, ticketCount);
+      if (newRemaining < 0) {
+        throw new AppError('Not enough tickets available — please try again.', 409);
       }
 
-      // Create booking row and get the generated ID
+      // Insert booking row
       const bookingId = await bookingRepository.createBooking(client, userId, eventId, ticketCount);
 
-      // Create individual ticket rows
-      await bookingRepository.createTickets(client, bookingId, attendees);
+      // Insert tickets (one-at-a-time with RETURNING)
+      const insertedTickets = await bookingRepository.createTickets(client, bookingId, attendees);
 
-      return bookingId;
+      // Sign each ticket with HMAC
+      await bookingRepository.signTickets(insertedTickets, eventId, event.start_at, client);
+
+      return {
+        booking: {
+          id: bookingId,
+          user_id: userId,
+          event_id: eventId,
+          ticket_count: ticketCount,
+          status: 'pending' as const,
+          cancelled_at: null,
+          cancellation_reason: null,
+          deleted_at: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        tickets: insertedTickets,
+      };
     });
 
-    return bookingId;
+    // Audit log (async — don't block the response)
+    bookingRepository.writeBookingAudit(
+      booking.id, null, 'user', userId,
+      'booking_created',
+      { eventId, ticketCount, eventTitle: event.title }
+    ).catch(() => {});
+
+    return { bookingId: booking.id, tickets };
+  }
+
+  /**
+   * Cancel a confirmed booking:
+   *   1. Lock the booking row (FOR UPDATE)
+   *   2. Verify the booking is in a cancellable state
+   *   3. Check the event's cancellation window
+   *   4. Mark booking cancelled
+   *   5. Release capacity back to the event
+   */
+  async cancelBooking(bookingId: number, userId: number, reason: string | undefined) {
+    // Verify the booking exists and belongs to this user
+    const existing = await bookingRepository.getBookingWithTickets(bookingId, userId);
+    if (!existing) throw new AppError('Booking not found', 404);
+
+    if (existing.booking.status === 'cancelled') {
+      throw new AppError('Booking is already cancelled', 400);
+    }
+    if (existing.booking.status === 'attended') {
+      throw new AppError('Cannot cancel a booking that has already been attended', 400);
+    }
+
+    // Check cancellation window on the event
+    const event = await eventRepository.getEventById(existing.booking.event_id);
+    if (event?.cancellable_until && new Date() > new Date(event.cancellable_until)) {
+      throw new AppError(
+        'This booking is past the cancellation window and cannot be cancelled for a refund.',
+        403
+      );
+    }
+
+    // Atomic cancel + capacity release
+    const result = await bookingRepository.cancelBooking(bookingId, userId, reason ?? null);
+
+    if (!result.cancelled) {
+      throw new AppError('Failed to cancel booking', 500);
+    }
+
+    // Audit log
+    bookingRepository.writeBookingAudit(
+      bookingId, null, 'user', userId,
+      'booking_cancelled',
+      { ticketCount: result.ticketCount, eventId: result.eventId, reason }
+    ).catch(() => {});
+
+    return {
+      cancelled: true,
+      bookingId,
+      ticketCount: result.ticketCount,
+      refundEligible: event?.cancellable_until ? new Date() <= new Date(event.cancellable_until) : true,
+    };
   }
 
   async getBooking(bookingId: number, userId: number) {
@@ -72,14 +152,18 @@ export class BookingService {
   }
 
   async getMyBookings(userId: number) {
-    const { rows } = await getPool().query(
-      `SELECT b.*, e.title AS event_title, e.venue AS event_venue, e.start_at AS event_start_at
-       FROM bookings b
-       INNER JOIN events e ON b.event_id = e.id
-       WHERE b.user_id = $1
-       ORDER BY b.created_at DESC`,
-      [userId]
-    );
+    const rows = await withTransaction(async (client) => {
+      const result = await client.query(
+        `SELECT b.*, e.title AS event_title, e.venue AS event_venue, e.start_at AS event_start_at
+         FROM bookings b
+         INNER JOIN events e ON b.event_id = e.id
+         WHERE b.user_id = $1
+         ORDER BY b.created_at DESC`,
+        [userId]
+      );
+      return result.rows;
+    });
+
     return rows as unknown as Array<BookingRow & {
       event_title: string;
       event_venue: string;

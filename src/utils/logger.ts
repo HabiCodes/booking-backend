@@ -1,7 +1,22 @@
 import winston from 'winston';
 import { config } from '../config';
 
-const logFormat = winston.format.combine(
+/**
+ * Production-grade structured logger.
+ *
+ * Outputs JSON in production (so log aggregators like Datadog/Loki/CloudWatch
+ * can parse fields) and colorised human-readable text in development.
+ *
+ * Use the child logger pattern for request-scoped metadata:
+ *   logger.child({ requestId: '...', route: '/api/...' })
+ */
+const jsonFormat = winston.format.combine(
+  winston.format.timestamp(),
+  winston.format.errors({ stack: true }),
+  winston.format.json()
+);
+
+const devFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.errors({ stack: true }),
   winston.format.splat(),
@@ -10,14 +25,23 @@ const logFormat = winston.format.combine(
   })
 );
 
+const isProduction = config.nodeEnv === 'production';
+
 export const logger = winston.createLogger({
-  level: config.nodeEnv === 'production' ? 'info' : 'debug',
-  format: logFormat,
+  level: isProduction ? 'info' : 'debug',
+  format: isProduction ? jsonFormat : devFormat,
+  defaultMeta: { service: 'booking-backend', env: config.nodeEnv },
   transports: [
     new winston.transports.Console({
-      format: winston.format.combine(winston.format.colorize(), logFormat),
+      format: isProduction ? jsonFormat : winston.format.combine(winston.format.colorize(), devFormat),
     }),
-    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'logs/combined.log' }),
   ],
 });
+
+// File transports only when configured (won't fail on read-only filesystems)
+if (config.logging?.fileEnabled !== false && !isProduction) {
+  logger.add(new winston.transports.File({ filename: 'logs/error.log', level: 'error' }));
+  logger.add(new winston.transports.File({ filename: 'logs/combined.log' }));
+}
+
+export default logger;

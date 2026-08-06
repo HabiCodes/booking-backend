@@ -5,10 +5,11 @@ import { EventRow, TicketRow } from '../types';
 export interface PdfTicketPayload {
   event: EventRow;
   tickets: TicketRow[];
+  bannerImage?: Buffer | null;
 }
 
 export async function generateBookingPdf(payload: PdfTicketPayload): Promise<Buffer> {
-  const { event, tickets } = payload;
+  const { event, tickets, bannerImage } = payload;
 
   return new Promise<Buffer>(async (resolve, reject) => {
     try {
@@ -46,7 +47,7 @@ export async function generateBookingPdf(payload: PdfTicketPayload): Promise<Buf
       for (let i = 0; i < tickets.length; i++) {
         const ticket = tickets[i];
         if (i > 0) doc.addPage();
-        await drawTicketPage(doc, event, ticket);
+        await drawTicketPage(doc, event, ticket, bannerImage);
       }
 
       doc.end();
@@ -56,7 +57,12 @@ export async function generateBookingPdf(payload: PdfTicketPayload): Promise<Buf
   });
 }
 
-async function drawTicketPage(doc: PDFKit.PDFDocument, event: EventRow, ticket: TicketRow) {
+async function drawTicketPage(
+  doc: PDFKit.PDFDocument,
+  event: EventRow,
+  ticket: TicketRow,
+  bannerImage?: Buffer | null
+) {
   const margin = 40;
   const pageWidth = doc.page.width;
   const pageHeight = doc.page.height;
@@ -152,6 +158,23 @@ async function drawTicketPage(doc: PDFKit.PDFDocument, event: EventRow, ticket: 
       width: cardW - 48,
       align: 'center',
     });
+
+  // Active banner at the bottom of each ticket page
+  if (bannerImage) {
+    const bannerHeight = 60;
+    const bannerY = pageHeight - margin - bannerHeight;
+    const bannerWidth = pageWidth - margin * 2;
+
+    try {
+      doc.image(bannerImage, cardX, bannerY, {
+        width: bannerWidth,
+        height: bannerHeight,
+        fit: [bannerWidth, bannerHeight],
+      });
+    } catch {
+      // If image render fails, silently skip — banner is promotional, not critical
+    }
+  }
 
   // Footer notice
   doc

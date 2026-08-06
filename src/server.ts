@@ -1,11 +1,13 @@
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import { config } from './config';
-import { getPool, closePool, runMigrations } from './db/pool';
+import { getPool, closePool } from './db/pool';
+import { runMigrations } from './db/migrations';
 import { notFoundHandler, errorHandler } from './middleware/errorHandler';
 import { initSocketServer, getIo, broadcastBookingCount } from './sockets';
 import { createServer } from 'http';
@@ -16,6 +18,17 @@ import scanRoutes from './routes/scanRoutes';
 import adminRoutes from './routes/adminRoutes';
 import adminProtectedRoutes from './routes/adminProtectedRoutes';
 import { logger } from './utils/logger';
+import { ensureUploadDirs } from './services/uploadService';
+import {
+  liveness,
+  readiness,
+  shutdown as healthShutdown,
+} from './controllers/healthController';
+import docsRoutes from './routes/docsRoutes';
+import { assertValidEnvOrExit } from './utils/envValidation';
+
+// Run env validation before any other initialization
+assertValidEnvOrExit();
 
 const app = express();
 const server = createServer(app);
@@ -36,43 +49,74 @@ app.use(compression());
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 30,
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+
+const globalLimiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  max: config.rateLimit.max,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path === '/health',
 });
-app.use('/api/', limiter);
+app.use('/api/', globalLimiter);
 
-// Logging
+// Tighter limiter for auth endpoints
+const authLimiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  max: config.rateLimit.authMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// ── Logging ───────────────────────────────────────────────────────────────────
+
 if (config.nodeEnv !== 'test') {
   app.use(morgan('combined', {
     stream: { write: (msg: string) => logger.info(msg.trim()) },
   }));
 }
 
-// Health check
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', environment: config.nodeEnv });
-});
+// ── Health endpoints (unversioned, always available) ─────────────────────────
 
-// Routes
-app.use('/api/auth', authRoutes);
+app.get('/health/live', liveness);
+app.get('/health/ready', readiness);
+app.get('/health/shutdown', healthShutdown);
+
+// ── API v1 (versioned — use this for all new consumers) ──────────────────────
+
+const apiV1 = express.Router();
+
+apiV1.use('/auth', authLimiter, authRoutes);
+apiV1.use('/events', eventRoutes);
+apiV1.use('/bookings', bookingRoutes);
+apiV1.use('/scan', scanRoutes);
+apiV1.use('/admin', adminRoutes);
+apiV1.use('/admin', adminProtectedRoutes);
+
+app.use('/api/v1', apiV1);
+
+// ── Legacy /api routes (backward compatibility) ───────────────────────────────
+
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/scan', scanRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminProtectedRoutes);
 
-// 404
+// ── API documentation ────────────────────────────────────────────────────────
+
+app.use('/docs', docsRoutes);
+
+// ── 404 ──────────────────────────────────────────────────────────────────────
+
 app.use(notFoundHandler);
 
-// Error handler (must be last)
+// ── Error handler (must be last) ──────────────────────────────────────────────
+
 app.use(errorHandler);
 
-// Initialize
+// ── Initialize ────────────────────────────────────────────────────────────────
+
 async function start() {
   try {
     // Verify DB connection
@@ -90,9 +134,14 @@ async function start() {
     // Init Socket.IO
     initSocketServer(server);
 
+    // Ensure upload directories exist
+    ensureUploadDirs();
+
     // Start server
     server.listen(config.port, () => {
       logger.info(`Server running on port ${config.port} (${config.nodeEnv})`);
+      logger.info(`API v1:  /api/v1`);
+      logger.info(`Legacy:  /api  (deprecated)`);
     });
   } catch (err) {
     logger.error('Failed to start server:', err as Error);

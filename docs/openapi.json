@@ -1,0 +1,509 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Event Booking Platform API",
+    "description": "Backend API for an event booking and ticketing platform. All endpoints return `{ success: true, data: ... }` on success and `{ success: false, error: '...' }` on failure.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "/api/v1", "description": "API v1 (recommended)" },
+    { "url": "/api", "description": "Legacy /api prefix (deprecated)" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": false },
+          "error": { "type": "string" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health/live": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Liveness probe",
+        "responses": { "200": { "description": "Service is alive" } }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Readiness probe (includes DB check)",
+        "responses": {
+          "200": { "description": "All checks passed" },
+          "503": { "description": "One or more checks failed" }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "tags": ["Events"],
+        "summary": "List published events",
+        "parameters": [
+          { "name": "city", "in": "query", "schema": { "type": "string" } },
+          { "name": "category", "in": "query", "schema": { "type": "string" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "pageSize", "in": "query", "schema": { "type": "integer", "default": 20 } }
+        ],
+        "responses": { "200": { "description": "Paginated event list" } }
+      }
+    },
+    "/events/featured": {
+      "get": {
+        "tags": ["Events"],
+        "summary": "List featured events",
+        "responses": { "200": { "description": "Featured events list" } }
+      }
+    },
+    "/events/categories": {
+      "get": {
+        "tags": ["Events"],
+        "summary": "List all event categories",
+        "responses": { "200": { "description": "Category list" } }
+      }
+    },
+    "/events/cities": {
+      "get": {
+        "tags": ["Events"],
+        "summary": "List all event cities",
+        "responses": { "200": { "description": "City list" } }
+      }
+    },
+    "/events/{id}": {
+      "get": {
+        "tags": ["Events"],
+        "summary": "Get event details",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Event details" },
+          "404": { "description": "Event not found" }
+        }
+      }
+    },
+    "/events/{id}/stats": {
+      "get": {
+        "tags": ["Events"],
+        "summary": "Booking and check-in stats for the event",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Stats" } }
+      }
+    },
+    "/bookings": {
+      "post": {
+        "tags": ["Bookings"],
+        "summary": "Create a new booking",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["event_id", "ticket_count"],
+                "properties": {
+                  "event_id": { "type": "integer" },
+                  "ticket_count": { "type": "integer", "minimum": 1 },
+                  "attendee_name": { "type": "string" },
+                  "attendee_phone": { "type": "string" },
+                  "attendee_email": { "type": "string", "format": "email" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Booking created" },
+          "400": { "description": "Validation error" },
+          "409": { "description": "Event sold out or cap exceeded" }
+        }
+      }
+    },
+    "/bookings/my": {
+      "get": {
+        "tags": ["Bookings"],
+        "summary": "List current user's bookings",
+        "responses": { "200": { "description": "User's booking list" } }
+      }
+    },
+    "/bookings/{id}/cancel": {
+      "post": {
+        "tags": ["Bookings"],
+        "summary": "Cancel a booking",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Booking cancelled" },
+          "404": { "description": "Booking not found" }
+        }
+      }
+    },
+    "/bookings/{id}/tickets": {
+      "get": {
+        "tags": ["Bookings"],
+        "summary": "List tickets for a booking",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Ticket list" } }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register a new user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password", "username"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string", "minLength": 8 },
+                  "username": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "User created" } }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Login",
+        "responses": { "200": { "description": "JWT returned" } }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Current user profile",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "User profile" } }
+      }
+    },
+    "/auth/verify-email": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Verify email with token",
+        "responses": { "200": { "description": "Email verified" } }
+      }
+    },
+    "/scan/verify": {
+      "post": {
+        "tags": ["Scan"],
+        "summary": "Verify a ticket QR code",
+        "responses": { "200": { "description": "Verification result" } }
+      }
+    },
+    "/scan/checkin": {
+      "post": {
+        "tags": ["Scan"],
+        "summary": "Check in a ticket",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Check-in confirmed" } }
+      }
+    },
+    "/admin/login": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Admin login (public)",
+        "responses": { "200": { "description": "Admin JWT returned" } }
+      }
+    },
+    "/admin/me": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Current admin profile",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Admin profile with permissions" } }
+      }
+    },
+    "/admin/stats": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Dashboard stats",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Aggregated stats" } }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List all users",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Paginated user list" } }
+      }
+    },
+    "/admin/bookings": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List all bookings",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Paginated booking list" } }
+      }
+    },
+    "/admin/bookings/{id}/cancel": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Admin cancel booking",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Booking cancelled" } }
+      }
+    },
+    "/admin/recent-tickets": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Recent tickets across all bookings",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Recent ticket list" } }
+      }
+    },
+    "/admin/admins": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List admin accounts",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Admin list" } }
+      }
+    },
+    "/admin/audit-logs": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "View audit log entries",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "action", "in": "query", "schema": { "type": "string" } },
+          { "name": "admin_id", "in": "query", "schema": { "type": "integer" } },
+          { "name": "entity_type", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } }
+        ],
+        "responses": { "200": { "description": "Paginated audit log entries" } }
+      }
+    },
+    "/admin/events": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Admin event list",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Event list" } }
+      },
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Create event",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "Event created" } }
+      }
+    },
+    "/admin/events/{id}": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get event",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Event details" } }
+      },
+      "put": {
+        "tags": ["Admin"],
+        "summary": "Update event",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Event updated" } }
+      },
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Partially update event",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Event updated" } }
+      },
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Delete event",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Event deleted" } }
+      }
+    },
+    "/admin/events/{id}/restore": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Restore soft-deleted event",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Event restored" } }
+      }
+    },
+    "/admin/events/{id}/publish": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Publish event",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Event published" } }
+      }
+    },
+    "/admin/events/{id}/hide": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Hide event",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Event hidden" } }
+      }
+    },
+    "/admin/events/{id}/cancel": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Cancel event",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Event cancelled" } }
+      }
+    },
+    "/admin/events/{id}/featured": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Toggle featured status",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Featured status toggled" } }
+      }
+    },
+    "/admin/banners": {
+      "get": {
+        "tags": ["Banners"],
+        "summary": "List banners",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Banner list" } }
+      },
+      "post": {
+        "tags": ["Banners"],
+        "summary": "Create banner",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "Banner created" } }
+      }
+    },
+    "/admin/banners/{id}": {
+      "get": {
+        "tags": ["Banners"],
+        "summary": "Get banner",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Banner details" } }
+      },
+      "patch": {
+        "tags": ["Banners"],
+        "summary": "Update banner",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Banner updated" } }
+      },
+      "delete": {
+        "tags": ["Banners"],
+        "summary": "Delete banner",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Banner deleted" } }
+      }
+    },
+    "/admin/banners/{id}/activate": {
+      "put": {
+        "tags": ["Banners"],
+        "summary": "Activate banner",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Banner activated" } }
+      }
+    },
+    "/admin/banners/{id}/deactivate": {
+      "put": {
+        "tags": ["Banners"],
+        "summary": "Deactivate banner",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Banner deactivated" } }
+      }
+    },
+    "/admin/banners/active-ticket-ad": {
+      "get": {
+        "tags": ["Banners"],
+        "summary": "Get active banner for ticket PDF",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Active ticket ad banner" } }
+      }
+    },
+    "/admin/uploads/event": {
+      "post": {
+        "tags": ["Uploads"],
+        "summary": "Upload event image",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "File uploaded" } }
+      }
+    },
+    "/admin/uploads/banner": {
+      "post": {
+        "tags": ["Uploads"],
+        "summary": "Upload banner image",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "File uploaded" } }
+      }
+    }
+  }
+}

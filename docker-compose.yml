@@ -1,0 +1,51 @@
+# docker-compose.yml — local development stack
+#
+# Start: docker compose up --build
+# Stop:  docker compose down
+
+version: '3.9'
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dev_password_change_me
+      POSTGRES_DB: event_booking
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://postgres:dev_password_change_me@db:5432/event_booking
+      JWT_SECRET: ${JWT_SECRET:-change-me-user-secret}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-change-me-admin-secret}
+      QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:-change-me-qr-secret}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      UPLOAD_DIR: /app/uploads
+      LOG_FILE_ENABLED: "false"
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-now}
+      ADMIN_NAME: ${ADMIN_NAME:-Admin}
+      ADMIN_SEED_ON_BOOT: "true"
+    ports:
+      - "4000:4000"
+    volumes:
+      - uploads:/app/uploads
+
+volumes:
+  pgdata:
+  uploads:
