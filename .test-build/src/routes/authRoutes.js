@@ -20,6 +20,7 @@ router.post('/logout-all', auth_1.authMiddleware, authController_1.logoutAll);
 router.post('/forgot-password', rateLimiter_1.authRateLimiter, authController_1.forgotPassword);
 router.post('/reset-password', authController_1.resetPassword);
 router.post('/change-password', auth_1.authMiddleware, authController_1.changePassword);
+router.get('/me', auth_1.authMiddleware, authController_1.getMe);
 // Sessions
 router.get('/sessions', auth_1.authMiddleware, authController_1.getMySessions);
 router.post('/sessions/revoke', auth_1.authMiddleware, authController_1.revokeMySession);

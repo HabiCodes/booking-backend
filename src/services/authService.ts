@@ -390,6 +390,75 @@ export class AuthService {
     return { success: true, message: 'Verification email sent. Please check your inbox.' };
   }
 
+  // ── Password reset (separate from email verification) ───────────────────────
+
+  async requestPasswordReset(email: string): Promise<VerificationResult> {
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await userRepository.findByEmail(normalizedEmail);
+
+    if (!user) {
+      // Don't reveal whether the email exists (security)
+      return { success: true, message: 'If an account with that email exists, a password reset link has been sent.' };
+    }
+
+    // Invalidate old password-reset tokens for this user
+    await authRepository.invalidateUserVerificationTokens(user.id);
+
+    // Generate new password reset token (stored with type 'password_reset')
+    const rawToken = generateSecureToken();
+    const tokenHash = hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + 2 * 3600_000).toISOString(); // 2-hour window
+    await authRepository.createVerificationToken(user.id, tokenHash, expiresAt, 'password_reset');
+
+    // Send password reset email
+    const resetLink = `${this.baseUrl}/reset-password?token=${rawToken}`;
+    const message = {
+      to: normalizedEmail,
+      from: config.email.from,
+      subject: 'Reset your password',
+      html: `<p>Hi ${user.username ?? 'there'},</p>
+             <p>You requested a password reset. Click the link below to set a new password:</p>
+             <p><a href="${resetLink}">${resetLink}</a></p>
+             <p>This link expires in 2 hours. If you did not request this, ignore this email.</p>`,
+      text: `Hi ${user.username ?? 'there'},\n\nYou requested a password reset. Visit this link to set a new password:\n${resetLink}\n\nThis link expires in 2 hours. If you did not request this, ignore this email.`,
+    };
+    await this.emailService.send(message).catch((err) => logger.warn('Password reset email failed:', err));
+
+    return { success: true, message: 'If an account with that email exists, a password reset link has been sent.' };
+  }
+
+  async resetPassword(rawToken: string, newPassword: string): Promise<void> {
+    const tokenHash = hashToken(rawToken);
+
+    // Find a non-expired, unused password_reset token
+    const tokenRow = await authRepository.findVerificationToken(tokenHash);
+    if (!tokenRow || tokenRow.type !== 'password_reset') {
+      throw new Error('Invalid or expired password reset token');
+    }
+
+    // Password policy
+    const policyResult = validatePassword(newPassword, defaultPasswordPolicy);
+    if (!policyResult.valid) {
+      const err = new Error(policyResult.errors.join('; ')) as Error & { statusCode?: number };
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Hash new password and update
+    const newHash = await userRepository.hashPassword(newPassword);
+    await getPool().query(
+      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      [newHash, tokenRow.user_id]
+    );
+
+    // Mark token as used so it can't be replayed
+    await authRepository.markVerificationTokenUsed(tokenHash);
+
+    // Revoke all existing refresh tokens (force re-login everywhere)
+    await authRepository.revokeAllUserRefreshTokens(tokenRow.user_id);
+    await authRepository.revokeAllUserSessions(tokenRow.user_id);
+  }
+
   // ── Change password ───────────────────────────────────────────────────────
 
   async changePassword(userId: number, currentPassword: string, newPassword: string): Promise<void> {

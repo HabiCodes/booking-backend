@@ -14,6 +14,7 @@ import {
   changePassword,
   getMySessions,
   revokeMySession,
+  getMe,
 } from '../controllers/authController';
 import { authMiddleware } from '../middleware/auth';
 import { authRateLimiter, resendVerificationLimiter } from '../middleware/rateLimiter';
@@ -38,6 +39,8 @@ router.post('/forgot-password', authRateLimiter, forgotPassword);
 router.post('/reset-password', resetPassword);
 
 router.post('/change-password', authMiddleware, changePassword);
+
+router.get('/me', authMiddleware, getMe);
 
 // Sessions
 router.get('/sessions', authMiddleware, getMySessions);

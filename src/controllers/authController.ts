@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { authService } from '../services/authService';
+import { userRepository } from '../repositories/userRepository';
 import { AppError } from '../middleware/errorHandler';
 import { sanitizeString, validateEmail } from '../middleware/validator';
 
@@ -157,8 +158,8 @@ export async function forgotPassword(req: Request, res: Response, next: NextFunc
     if (!email) throw new AppError('Email is required', 400);
 
     // Always return success to prevent email enumeration
-    const result = await authService.resendVerification(sanitizeString(email));
-    res.json({ success: true, message: 'If an account with that email exists, a reset link has been sent.' });
+    await authService.requestPasswordReset(sanitizeString(email));
+    res.json({ success: true, message: 'If an account with that email exists, a password reset link has been sent.' });
   } catch (err) {
     return next(err);
   }
@@ -168,20 +169,32 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
   try {
     const { token, newPassword } = req.body;
 
-    if (!token || !newPassword) throw new AppError('Token and new password are required', 400);
-
-    // For now, reuse verification flow for password reset tokens
-    // In production, you'd have a separate password_reset_tokens table
-    const result = await authService.verifyEmail(token);
-    if (!result.success) {
-      return res.status(400).json({ success: false, message: result.message });
+    if (!token || !newPassword) {
+      throw new AppError('Token and new password are required', 400);
     }
 
-    // The verifyEmail call marks the user as verified — we need a different approach
-    // For now, just confirm the token was valid; actual password reset uses a separate table
-    return res.json({ success: true, message: 'Password reset successful. Please log in.' });
+    if (newPassword.length < 8) {
+      throw new AppError('Password must be at least 8 characters', 400);
+    }
+
+    await authService.resetPassword(token, newPassword);
+    res.json({ success: true, message: 'Password reset successful. Please log in with your new password.' });
   } catch (err) {
-    return next(err);
+    next(err);
+  }
+}
+
+export async function getMe(req: Request, res: Response, next: NextFunction) {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) throw new AppError('Unauthorized', 401);
+
+    const user = await userRepository.findById(userId);
+    if (!user) throw new AppError('User not found', 404);
+
+    res.json({ success: true, data: user });
+  } catch (err) {
+    next(err);
   }
 }
 

@@ -68,14 +68,18 @@ export interface EventRow {
   thumbnail_url: string | null;
   logo_url: string | null;
   gallery: string[];               // JSONB array of URLs
+  organizer: string | null;
   capacity: number;
   remaining_capacity: number | null;
+  price: number | string;          // pg returns NUMERIC as string
+  currency: string;
   status: EventStatus;
   visibility: EventVisibility;
   is_featured: boolean;
   is_active: boolean;
   cancel_window_hours: number;
   cancellable_until: string | null;
+  published_at: string | null;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
@@ -134,6 +138,7 @@ export interface EventCreateInput {
   thumbnail_url?: string;
   logo_url?: string;
   gallery?: string[];
+  organizer?: string;
   capacity: number;
   remaining_capacity?: number;
   price?: number;
@@ -146,8 +151,6 @@ export interface EventCreateInput {
 
 export interface EventUpdateInput extends Partial<EventCreateInput> {
   is_active?: boolean;
-  price?: number;
-  currency?: string;
   cancel_window_hours?: number;
 }
 

@@ -276,6 +276,59 @@ class AuthService {
         await this.emailService.send(message).catch((err) => logger_1.logger.warn('Email send failed:', err));
         return { success: true, message: 'Verification email sent. Please check your inbox.' };
     }
+    // ── Password reset (separate from email verification) ───────────────────────
+    async requestPasswordReset(email) {
+        const normalizedEmail = email.toLowerCase().trim();
+        const user = await userRepository_1.userRepository.findByEmail(normalizedEmail);
+        if (!user) {
+            // Don't reveal whether the email exists (security)
+            return { success: true, message: 'If an account with that email exists, a password reset link has been sent.' };
+        }
+        // Invalidate old password-reset tokens for this user
+        await authRepository_1.authRepository.invalidateUserVerificationTokens(user.id);
+        // Generate new password reset token (stored with type 'password_reset')
+        const rawToken = (0, safeToken_1.generateSecureToken)();
+        const tokenHash = (0, safeToken_1.hashToken)(rawToken);
+        const expiresAt = new Date(Date.now() + 2 * 3600000).toISOString(); // 2-hour window
+        await authRepository_1.authRepository.createVerificationToken(user.id, tokenHash, expiresAt, 'password_reset');
+        // Send password reset email
+        const resetLink = `${this.baseUrl}/reset-password?token=${rawToken}`;
+        const message = {
+            to: normalizedEmail,
+            from: config_1.config.email.from,
+            subject: 'Reset your password',
+            html: `<p>Hi ${user.username ?? 'there'},</p>
+             <p>You requested a password reset. Click the link below to set a new password:</p>
+             <p><a href="${resetLink}">${resetLink}</a></p>
+             <p>This link expires in 2 hours. If you did not request this, ignore this email.</p>`,
+            text: `Hi ${user.username ?? 'there'},\n\nYou requested a password reset. Visit this link to set a new password:\n${resetLink}\n\nThis link expires in 2 hours. If you did not request this, ignore this email.`,
+        };
+        await this.emailService.send(message).catch((err) => logger_1.logger.warn('Password reset email failed:', err));
+        return { success: true, message: 'If an account with that email exists, a password reset link has been sent.' };
+    }
+    async resetPassword(rawToken, newPassword) {
+        const tokenHash = (0, safeToken_1.hashToken)(rawToken);
+        // Find a non-expired, unused password_reset token
+        const tokenRow = await authRepository_1.authRepository.findVerificationToken(tokenHash);
+        if (!tokenRow || tokenRow.type !== 'password_reset') {
+            throw new Error('Invalid or expired password reset token');
+        }
+        // Password policy
+        const policyResult = (0, passwordPolicy_1.validatePassword)(newPassword, passwordPolicy_1.defaultPasswordPolicy);
+        if (!policyResult.valid) {
+            const err = new Error(policyResult.errors.join('; '));
+            err.statusCode = 400;
+            throw err;
+        }
+        // Hash new password and update
+        const newHash = await userRepository_1.userRepository.hashPassword(newPassword);
+        await (0, pool_1.getPool)().query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, tokenRow.user_id]);
+        // Mark token as used so it can't be replayed
+        await authRepository_1.authRepository.markVerificationTokenUsed(tokenHash);
+        // Revoke all existing refresh tokens (force re-login everywhere)
+        await authRepository_1.authRepository.revokeAllUserRefreshTokens(tokenRow.user_id);
+        await authRepository_1.authRepository.revokeAllUserSessions(tokenRow.user_id);
+    }
     // ── Change password ───────────────────────────────────────────────────────
     async changePassword(userId, currentPassword, newPassword) {
         const user = await userRepository_1.userRepository.findByEmail((await userRepository_1.userRepository.findById(userId))?.email ?? '');
