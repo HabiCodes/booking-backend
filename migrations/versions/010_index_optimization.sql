@@ -51,11 +51,16 @@ CREATE INDEX IF NOT EXISTS idx_tickets_booking_checkedin
 
 -- ── Login attempts ────────────────────────────────────────────────────
 -- Login attempts are queried by IP for the rate limiter. Composite exists.
--- Add a partial index for recent attempts (last 24h) — useful for the
--- audit/rate limit middleware hot path.
-CREATE INDEX IF NOT EXISTS idx_login_attempts_recent
-  ON login_attempts (ip_address, attempted_at DESC)
-  WHERE attempted_at > NOW() - INTERVAL '24 hours';
+-- A partial index restricted to a rolling 24-hour window cannot be expressed
+-- with NOW() in the predicate (NOW() is STABLE, not IMMUTABLE, and is
+-- therefore rejected by PostgreSQL in index expressions).  Instead, use a
+-- composite B-tree index on (ip_address, attempted_at DESC) — the planner
+-- uses the leading column for the IP equality lookup and the descending
+-- timestamp lets the rate-limiter walk only the most recent rows.  This
+-- matches the same query pattern that the partial index was targeting,
+-- without needing a volatile predicate.
+CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_time
+  ON login_attempts (ip_address, attempted_at DESC);
 
 -- ── Admins ─────────────────────────────────────────────────────────────
 -- The seed/login flow queries admins by email. idx_admins_email already
