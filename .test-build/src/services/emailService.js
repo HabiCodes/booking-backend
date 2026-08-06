@@ -22,6 +22,7 @@ exports.escapeHtml = escapeHtml;
 exports.renderBrandedLayout = renderBrandedLayout;
 exports.buildVerificationEmail = buildVerificationEmail;
 exports.buildPasswordResetEmail = buildPasswordResetEmail;
+exports.buildOtpEmail = buildOtpEmail;
 exports.createEmailService = createEmailService;
 const logger_1 = require("../utils/logger");
 // ── HTML templates (BookMyTurf branding) ──────────────────────────────────────
@@ -190,6 +191,50 @@ function buildPasswordResetEmail(input) {
             `Reset your ${exports.BRAND.name} password by visiting:\n\n${input.resetLink}\n\n` +
             `This link expires in ${ttl} minutes.\n\n` +
             `If you did not request this, you can ignore this email.\n\n` +
+            `— The ${exports.BRAND.name} team`,
+        html,
+    };
+}
+function buildOtpEmail(input) {
+    const displayName = input.username || input.recipientEmail;
+    const recipientFirstName = displayName.split(/[\s._-]/)[0] || displayName;
+    const ttl = input.expiresInMinutes ?? 10;
+    const preheader = `Your ${exports.BRAND.name} verification code is ${input.otpCode} — valid for ${ttl} minutes.`;
+    const bodyHtml = `
+    <h2 style="margin:0 0 16px 0;font-size:22px;color:${exports.BRAND.textColor};">
+      Verify your email, ${escapeHtml(recipientFirstName)}
+    </h2>
+    <p style="margin:0 0 20px 0;">
+      Thanks for signing up to ${escapeHtml(exports.BRAND.name)}. Use the verification code below to complete your registration.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:24px 0;">
+      <tr>
+        <td align="center" style="background:${exports.BRAND.bgColor};border-radius:10px;padding:20px 24px;">
+          <span style="font-size:36px;font-weight:800;letter-spacing:8px;color:${exports.BRAND.primaryColor};font-family:'Courier New',Courier,monospace;">
+            ${escapeHtml(input.otpCode)}
+          </span>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0 0 8px 0;font-size:14px;color:${exports.BRAND.mutedColor};">
+      This code expires in <strong>${ttl} minutes</strong>. Do not share it with anyone.
+    </p>
+    <p style="margin:18px 0 0 0;padding:14px 16px;background:#fef3c7;border-left:4px solid ${exports.BRAND.accentColor};border-radius:0 8px 8px 0;font-size:13px;color:#92400e;line-height:1.5;">
+      <strong>Security notice:</strong> ${escapeHtml(exports.BRAND.name)} will never ask you for this code by phone, SMS, or email. If you did not request this code, you can safely ignore this message.
+    </p>`;
+    const html = renderBrandedLayout({
+        preheader,
+        bodyHtml,
+    });
+    return {
+        to: input.recipientEmail,
+        subject: `Your ${exports.BRAND.name} verification code`,
+        text: `Hi ${displayName},\n\n` +
+            `Your ${exports.BRAND.name} verification code is:\n\n` +
+            `    ${input.otpCode}\n\n` +
+            `This code expires in ${ttl} minutes.\n` +
+            `Do not share this code with anyone.\n\n` +
+            `If you did not request this code, please ignore this email.\n\n` +
             `— The ${exports.BRAND.name} team`,
         html,
     };

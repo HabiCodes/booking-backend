@@ -116,6 +116,52 @@ class AuthRepository {
         const { rows } = await (0, pool_1.getPool)().query('SELECT * FROM user_sessions WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
         return rows;
     }
+    // ── Pending Registrations (OTP) ───────────────────────────────────────────
+    async createPendingRegistration(input) {
+        // Use a transaction to atomically invalidate any existing unconsumed
+        // row for this email and insert the new one.  The unique partial
+        // index (email WHERE consumed_at IS NULL) guarantees only one active
+        // row per email; the explicit invalidate makes the intent clear and
+        // avoids "could not obtain exclusive lock" races under concurrency.
+        return (0, pool_1.withTransaction)(async (client) => {
+            await client.query(`UPDATE pending_registrations SET consumed_at = NOW()
+         WHERE email = $1 AND consumed_at IS NULL`, [input.email.toLowerCase().trim()]);
+            const { rows } = await client.query(`INSERT INTO pending_registrations (email, username, password_hash, otp_hash, expires_at)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`, [
+                input.email.toLowerCase().trim(),
+                input.username?.trim() ?? null,
+                input.passwordHash,
+                input.otpHash,
+                input.expiresAt,
+            ]);
+            return rowToNumber(rows[0]);
+        });
+    }
+    async findPendingRegistrationByEmail(email) {
+        const { rows } = await (0, pool_1.getPool)().query('SELECT * FROM pending_registrations WHERE email = $1 AND consumed_at IS NULL LIMIT 1', [email.toLowerCase().trim()]);
+        return rows[0] || null;
+    }
+    async findPendingRegistrationByOtpHash(otpHash) {
+        const { rows } = await (0, pool_1.getPool)().query('SELECT * FROM pending_registrations WHERE otp_hash = $1 AND consumed_at IS NULL AND expires_at > NOW() LIMIT 1', [otpHash]);
+        return rows[0] || null;
+    }
+    async incrementPendingAttempts(id) {
+        await (0, pool_1.getPool)().query('UPDATE pending_registrations SET otp_attempts = otp_attempts + 1 WHERE id = $1', [id]);
+    }
+    async markPendingConsumed(id) {
+        await (0, pool_1.getPool)().query('UPDATE pending_registrations SET consumed_at = NOW() WHERE id = $1', [id]);
+    }
+    async deletePendingRegistration(id) {
+        await (0, pool_1.getPool)().query('DELETE FROM pending_registrations WHERE id = $1', [id]);
+    }
+    async invalidateAllPendingForEmail(email) {
+        const result = await (0, pool_1.getPool)().query('UPDATE pending_registrations SET consumed_at = NOW() WHERE email = $1 AND consumed_at IS NULL', [email.toLowerCase().trim()]);
+        return result.rowCount ?? 0;
+    }
+    async cleanupExpiredPendingRegistrations() {
+        const result = await (0, pool_1.getPool)().query('DELETE FROM pending_registrations WHERE expires_at < NOW() OR consumed_at IS NOT NULL');
+        return result.rowCount ?? 0;
+    }
 }
 exports.AuthRepository = AuthRepository;
 exports.authRepository = new AuthRepository();

@@ -135,6 +135,18 @@ export const config = {
     // Timeout per outbound email request (ms)
     timeoutMs: 10_000,
   },
+
+  // ── OTP registration ─────────────────────────────────────────────────────────
+  otp: {
+    /** Length of the numeric OTP in digits (default 6). */
+    codeLength: asInt(process.env.OTP_CODE_LENGTH, 6),
+    /** How many minutes the OTP is valid (default 10). */
+    expiryMinutes: asInt(process.env.OTP_EXPIRY_MINUTES, 10),
+    /** Maximum verification attempts before the OTP is invalidated (default 5). */
+    maxAttempts: asInt(process.env.OTP_MAX_ATTEMPTS, 5),
+    /** Sweep interval for boot-time cleanup of expired pending registrations (minutes). */
+    cleanupIntervalMinutes: asInt(process.env.OTP_CLEANUP_INTERVAL_MINUTES, 60),
+  },
 } as const;
 
 export type AppConfig = typeof config;

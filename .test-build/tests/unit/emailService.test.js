@@ -93,6 +93,64 @@ const emailService_1 = require("../../src/services/emailService");
         strict_1.default.ok(msg.html?.includes('2 hours'));
     });
 });
+// ── buildOtpEmail ──────────────────────────────────────────────────────────────
+(0, node_test_1.describe)('email > buildOtpEmail', () => {
+    (0, node_test_1.it)('returns the correct to / subject fields', () => {
+        const msg = (0, emailService_1.buildOtpEmail)({
+            otpCode: '482910',
+            recipientEmail: 'user@example.com',
+            username: 'John',
+        });
+        strict_1.default.strictEqual(msg.to, 'user@example.com');
+        strict_1.default.ok(msg.subject.includes('verification code') || msg.subject.includes(emailService_1.BRAND.name));
+    });
+    (0, node_test_1.it)('falls back display name to email when username is null', () => {
+        const msg = (0, emailService_1.buildOtpEmail)({
+            otpCode: '123456',
+            recipientEmail: 'user@example.com',
+            username: null,
+        });
+        strict_1.default.ok(msg.text?.includes('user@example.com'));
+    });
+    (0, node_test_1.it)('includes the OTP code in both text and html', () => {
+        const code = '482910';
+        const msg = (0, emailService_1.buildOtpEmail)({
+            otpCode: code,
+            recipientEmail: 'u@e.com',
+            username: null,
+        });
+        strict_1.default.ok(msg.text?.includes(code));
+        strict_1.default.ok(msg.html?.includes(code));
+    });
+    (0, node_test_1.it)('includes expiry info', () => {
+        const msg = (0, emailService_1.buildOtpEmail)({
+            otpCode: '123456',
+            recipientEmail: 'u@e.com',
+            username: null,
+            expiresInMinutes: 5,
+        });
+        strict_1.default.ok(msg.text?.includes('5 minutes'));
+        strict_1.default.ok(msg.html?.includes('5 minutes'));
+    });
+    (0, node_test_1.it)('includes a security warning', () => {
+        const msg = (0, emailService_1.buildOtpEmail)({
+            otpCode: '123456',
+            recipientEmail: 'u@e.com',
+            username: null,
+        });
+        strict_1.default.ok(msg.html?.includes('Security'));
+        strict_1.default.ok(msg.text?.includes('share'));
+    });
+    (0, node_test_1.it)('renders within the branded layout', () => {
+        const msg = (0, emailService_1.buildOtpEmail)({
+            otpCode: '123456',
+            recipientEmail: 'u@e.com',
+            username: null,
+        });
+        strict_1.default.ok(msg.html?.includes(emailService_1.BRAND.name));
+        strict_1.default.ok(msg.html?.includes('courier') || msg.html?.includes('Courier'));
+    });
+});
 // ── buildPasswordResetEmail ───────────────────────────────────────────────────
 (0, node_test_1.describe)('email > buildPasswordResetEmail', () => {
     (0, node_test_1.it)('returns a message with the reset subject', () => {

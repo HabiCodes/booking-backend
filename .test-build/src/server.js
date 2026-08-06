@@ -28,6 +28,7 @@ const uploadService_1 = require("./services/uploadService");
 const healthController_1 = require("./controllers/healthController");
 const docsRoutes_1 = __importDefault(require("./routes/docsRoutes"));
 const envValidation_1 = require("./utils/envValidation");
+const authRepository_1 = require("./repositories/authRepository");
 // Run env validation before any other initialization
 (0, envValidation_1.assertValidEnvOrExit)();
 const app = (0, express_1.default)();
@@ -104,6 +105,18 @@ async function start() {
             logger_1.logger.info('Database connection verified');
             await (0, migrations_1.runMigrations)();
             logger_1.logger.info('Database migrations completed');
+            // Background sweep: drop any pending registrations whose OTPs are
+            // already past their TTL or that were never collected.  We log the
+            // count when meaningful so ops can spot a spike in forgotten sign-ups.
+            try {
+                const dropped = await authRepository_1.authRepository.cleanupExpiredPendingRegistrations();
+                if (dropped > 0) {
+                    logger_1.logger.info(`[otp] cleaned up ${dropped} expired pending registration(s) at boot`);
+                }
+            }
+            catch (cleanupErr) {
+                logger_1.logger.warn('[otp] boot-time pending-registration cleanup failed (non-fatal):', cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr));
+            }
         }
         catch (dbErr) {
             const message = dbErr instanceof Error ? dbErr.message : String(dbErr);

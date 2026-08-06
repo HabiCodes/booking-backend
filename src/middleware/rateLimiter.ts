@@ -81,6 +81,23 @@ export const resendVerificationLimiter = rateLimiter({
   message: 'Too many verification emails requested. Please try again later.',
 });
 
+/**
+ * Rate limiter for OTP verification.  5 attempts per rolling 15-minute
+ * window keyed on (email + IP) so one attacker can't exhaust another
+ * legitimate user's attempts.
+ */
+export const otpVerifyLimiter = rateLimiter({
+  windowMs: 15 * 60_000,
+  max: 5,
+  keyGenerator: (req) => {
+    const body = req.body as { email?: string } | undefined;
+    const email = body?.email ? body.email.toLowerCase().trim() : '';
+    const ip = req.ip ?? 'unknown';
+    return `otp:${ip}:${email}`;
+  },
+  message: 'Too many OTP verification attempts. Please try again later.',
+});
+
 export const apiRateLimiter = rateLimiter({
   windowMs: 60_000,
   max: 100,

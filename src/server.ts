@@ -26,6 +26,7 @@ import {
 } from './controllers/healthController';
 import docsRoutes from './routes/docsRoutes';
 import { assertValidEnvOrExit } from './utils/envValidation';
+import { authRepository } from './repositories/authRepository';
 
 // Run env validation before any other initialization
 assertValidEnvOrExit();
@@ -128,6 +129,21 @@ async function start() {
 
       await runMigrations();
       logger.info('Database migrations completed');
+
+      // Background sweep: drop any pending registrations whose OTPs are
+      // already past their TTL or that were never collected.  We log the
+      // count when meaningful so ops can spot a spike in forgotten sign-ups.
+      try {
+        const dropped = await authRepository.cleanupExpiredPendingRegistrations();
+        if (dropped > 0) {
+          logger.info(`[otp] cleaned up ${dropped} expired pending registration(s) at boot`);
+        }
+      } catch (cleanupErr) {
+        logger.warn(
+          '[otp] boot-time pending-registration cleanup failed (non-fatal):',
+          cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+        );
+      }
     } catch (dbErr) {
       const message = dbErr instanceof Error ? dbErr.message : String(dbErr);
       logger.warn('Database connection failed (server will start without DB): ' + message);

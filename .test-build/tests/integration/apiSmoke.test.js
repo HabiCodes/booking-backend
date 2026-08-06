@@ -189,3 +189,45 @@ catch (err) {
         strict_1.default.strictEqual(status, 200);
     });
 });
+// ── OTP Registration flow (require server + DB) ──────────────────────────────
+(0, node_test_1.describe)('integration > otp registration', () => {
+    const testEmail = `otp-test-${Date.now()}@example.com`;
+    const testPassword = 'TestP@ssw0rd123';
+    (0, node_test_1.it)('POST /api/v1/auth/register-otp returns 202 (OTP sent)', async () => {
+        if (!HAS_DB || !serverAvailable)
+            return;
+        const { status, body } = await request('POST', '/api/v1/auth/register-otp', {
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: testEmail,
+                username: 'OtpTestUser',
+                password: testPassword,
+            }),
+        });
+        strict_1.default.strictEqual(status, 202);
+        strict_1.default.ok(body.message?.includes('verification code'));
+    });
+    (0, node_test_1.it)('POST /api/v1/auth/register-otp rejects duplicate email with 409', async () => {
+        if (!HAS_DB || !serverAvailable)
+            return;
+        const { status } = await request('POST', '/api/v1/auth/register-otp', {
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: testEmail,
+                username: 'OtpTestUser2',
+                password: testPassword,
+            }),
+        });
+        strict_1.default.strictEqual(status, 409);
+    });
+    (0, node_test_1.it)('POST /api/v1/auth/resend-registration-otp returns success', async () => {
+        if (!HAS_DB || !serverAvailable)
+            return;
+        const { status, body } = await request('POST', '/api/v1/auth/resend-registration-otp', {
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: testEmail }),
+        });
+        strict_1.default.strictEqual(status, 200);
+        strict_1.default.ok(body.success);
+    });
+});

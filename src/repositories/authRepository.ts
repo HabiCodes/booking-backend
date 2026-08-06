@@ -12,6 +12,7 @@ import type {
   RefreshTokenRow,
   VerificationTokenRow,
   UserSessionRow,
+  PendingRegistrationRow,
 } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -200,6 +201,90 @@ export class AuthRepository {
       [userId]
     );
     return rows as unknown as UserSessionRow[];
+  }
+
+  // ── Pending Registrations (OTP) ───────────────────────────────────────────
+
+  async createPendingRegistration(input: {
+    email: string;
+    username: string | null;
+    passwordHash: string;
+    otpHash: string;
+    expiresAt: string;
+  }): Promise<number> {
+    // Use a transaction to atomically invalidate any existing unconsumed
+    // row for this email and insert the new one.  The unique partial
+    // index (email WHERE consumed_at IS NULL) guarantees only one active
+    // row per email; the explicit invalidate makes the intent clear and
+    // avoids "could not obtain exclusive lock" races under concurrency.
+    return withTransaction(async (client) => {
+      await client.query(
+        `UPDATE pending_registrations SET consumed_at = NOW()
+         WHERE email = $1 AND consumed_at IS NULL`,
+        [input.email.toLowerCase().trim()]
+      );
+      const { rows } = await client.query(
+        `INSERT INTO pending_registrations (email, username, password_hash, otp_hash, expires_at)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [
+          input.email.toLowerCase().trim(),
+          input.username?.trim() ?? null,
+          input.passwordHash,
+          input.otpHash,
+          input.expiresAt,
+        ]
+      );
+      return rowToNumber((rows as unknown as Array<{ id: number }>)[0]);
+    });
+  }
+
+  async findPendingRegistrationByEmail(email: string): Promise<PendingRegistrationRow | null> {
+    const { rows } = await getPool().query(
+      'SELECT * FROM pending_registrations WHERE email = $1 AND consumed_at IS NULL LIMIT 1',
+      [email.toLowerCase().trim()]
+    );
+    return (rows as unknown as PendingRegistrationRow[])[0] || null;
+  }
+
+  async findPendingRegistrationByOtpHash(otpHash: string): Promise<PendingRegistrationRow | null> {
+    const { rows } = await getPool().query(
+      'SELECT * FROM pending_registrations WHERE otp_hash = $1 AND consumed_at IS NULL AND expires_at > NOW() LIMIT 1',
+      [otpHash]
+    );
+    return (rows as unknown as PendingRegistrationRow[])[0] || null;
+  }
+
+  async incrementPendingAttempts(id: number): Promise<void> {
+    await getPool().query(
+      'UPDATE pending_registrations SET otp_attempts = otp_attempts + 1 WHERE id = $1',
+      [id]
+    );
+  }
+
+  async markPendingConsumed(id: number): Promise<void> {
+    await getPool().query(
+      'UPDATE pending_registrations SET consumed_at = NOW() WHERE id = $1',
+      [id]
+    );
+  }
+
+  async deletePendingRegistration(id: number): Promise<void> {
+    await getPool().query('DELETE FROM pending_registrations WHERE id = $1', [id]);
+  }
+
+  async invalidateAllPendingForEmail(email: string): Promise<number> {
+    const result = await getPool().query(
+      'UPDATE pending_registrations SET consumed_at = NOW() WHERE email = $1 AND consumed_at IS NULL',
+      [email.toLowerCase().trim()]
+    );
+    return result.rowCount ?? 0;
+  }
+
+  async cleanupExpiredPendingRegistrations(): Promise<number> {
+    const result = await getPool().query(
+      'DELETE FROM pending_registrations WHERE expires_at < NOW() OR consumed_at IS NOT NULL'
+    );
+    return result.rowCount ?? 0;
   }
 }
 

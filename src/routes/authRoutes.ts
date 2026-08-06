@@ -15,9 +15,11 @@ import {
   getMySessions,
   revokeMySession,
   getMe,
+  verifyRegistrationOtp,
+  resendRegistrationOtp,
 } from '../controllers/authController';
 import { authMiddleware } from '../middleware/auth';
-import { authRateLimiter, resendVerificationLimiter } from '../middleware/rateLimiter';
+import { authRateLimiter, resendVerificationLimiter, otpVerifyLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 
@@ -31,6 +33,11 @@ router.post('/login-enhanced', authRateLimiter, loginEnhanced);
 // GET so the verification link in the email is a plain anchor href
 router.get('/verify-email', verifyEmail);
 router.post('/resend-verification', resendVerificationLimiter, resendVerification);
+
+// ── OTP Registration (preferred new flow) ───────────────────────────────────
+router.post('/register-otp', authRateLimiter, registerEnhanced);
+router.post('/verify-registration-otp', otpVerifyLimiter, verifyRegistrationOtp);
+router.post('/resend-registration-otp', resendVerificationLimiter, resendRegistrationOtp);
 router.post('/refresh-token', refreshToken);
 router.post('/logout', logout);
 router.post('/logout-all', authMiddleware, logoutAll);

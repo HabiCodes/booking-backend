@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
   buildVerificationEmail,
   buildPasswordResetEmail,
+  buildOtpEmail,
   escapeHtml,
   renderBrandedLayout,
   BRAND,
@@ -110,6 +111,71 @@ describe('email > buildVerificationEmail', () => {
     });
     assert.ok(msg.text?.includes('2 hours'));
     assert.ok(msg.html?.includes('2 hours'));
+  });
+});
+
+// ── buildOtpEmail ──────────────────────────────────────────────────────────────
+
+describe('email > buildOtpEmail', () => {
+  it('returns the correct to / subject fields', () => {
+    const msg = buildOtpEmail({
+      otpCode: '482910',
+      recipientEmail: 'user@example.com',
+      username: 'John',
+    });
+    assert.strictEqual(msg.to, 'user@example.com');
+    assert.ok(msg.subject.includes('verification code') || msg.subject.includes(BRAND.name));
+  });
+
+  it('falls back display name to email when username is null', () => {
+    const msg = buildOtpEmail({
+      otpCode: '123456',
+      recipientEmail: 'user@example.com',
+      username: null,
+    });
+    assert.ok(msg.text?.includes('user@example.com'));
+  });
+
+  it('includes the OTP code in both text and html', () => {
+    const code = '482910';
+    const msg = buildOtpEmail({
+      otpCode: code,
+      recipientEmail: 'u@e.com',
+      username: null,
+    });
+    assert.ok(msg.text?.includes(code));
+    assert.ok(msg.html?.includes(code));
+  });
+
+  it('includes expiry info', () => {
+    const msg = buildOtpEmail({
+      otpCode: '123456',
+      recipientEmail: 'u@e.com',
+      username: null,
+      expiresInMinutes: 5,
+    });
+    assert.ok(msg.text?.includes('5 minutes'));
+    assert.ok(msg.html?.includes('5 minutes'));
+  });
+
+  it('includes a security warning', () => {
+    const msg = buildOtpEmail({
+      otpCode: '123456',
+      recipientEmail: 'u@e.com',
+      username: null,
+    });
+    assert.ok(msg.html?.includes('Security'));
+    assert.ok(msg.text?.includes('share'));
+  });
+
+  it('renders within the branded layout', () => {
+    const msg = buildOtpEmail({
+      otpCode: '123456',
+      recipientEmail: 'u@e.com',
+      username: null,
+    });
+    assert.ok(msg.html?.includes(BRAND.name));
+    assert.ok(msg.html?.includes('courier') || msg.html?.includes('Courier'));
   });
 });
 

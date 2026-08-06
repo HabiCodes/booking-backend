@@ -353,6 +353,22 @@ export interface LoginAttemptRow {
 }
 
 // ---------------------------------------------------------------------------
+// Pending registrations (OTP-based signup — user row not created yet)
+// ---------------------------------------------------------------------------
+
+export interface PendingRegistrationRow {
+  id: number;
+  email: string;
+  username: string | null;
+  password_hash: string;
+  otp_hash: string;
+  otp_attempts: number;
+  expires_at: string;
+  consumed_at: string | null;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // Banners & File Uploads
 // ---------------------------------------------------------------------------
 

@@ -238,6 +238,65 @@ export function buildPasswordResetEmail(input: BuildPasswordResetEmailInput): Em
   };
 }
 
+// ── OTP email (registration verification) ─────────────────────────────────────
+
+export interface BuildOtpEmailInput {
+  otpCode: string;
+  recipientEmail: string;
+  username: string | null;
+  expiresInMinutes?: number;
+}
+
+export function buildOtpEmail(input: BuildOtpEmailInput): EmailMessage {
+  const displayName = input.username || input.recipientEmail;
+  const recipientFirstName = displayName.split(/[\s._-]/)[0] || displayName;
+  const ttl = input.expiresInMinutes ?? 10;
+
+  const preheader = `Your ${BRAND.name} verification code is ${input.otpCode} — valid for ${ttl} minutes.`;
+
+  const bodyHtml = `
+    <h2 style="margin:0 0 16px 0;font-size:22px;color:${BRAND.textColor};">
+      Verify your email, ${escapeHtml(recipientFirstName)}
+    </h2>
+    <p style="margin:0 0 20px 0;">
+      Thanks for signing up to ${escapeHtml(BRAND.name)}. Use the verification code below to complete your registration.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:24px 0;">
+      <tr>
+        <td align="center" style="background:${BRAND.bgColor};border-radius:10px;padding:20px 24px;">
+          <span style="font-size:36px;font-weight:800;letter-spacing:8px;color:${BRAND.primaryColor};font-family:'Courier New',Courier,monospace;">
+            ${escapeHtml(input.otpCode)}
+          </span>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0 0 8px 0;font-size:14px;color:${BRAND.mutedColor};">
+      This code expires in <strong>${ttl} minutes</strong>. Do not share it with anyone.
+    </p>
+    <p style="margin:18px 0 0 0;padding:14px 16px;background:#fef3c7;border-left:4px solid ${BRAND.accentColor};border-radius:0 8px 8px 0;font-size:13px;color:#92400e;line-height:1.5;">
+      <strong>Security notice:</strong> ${escapeHtml(BRAND.name)} will never ask you for this code by phone, SMS, or email. If you did not request this code, you can safely ignore this message.
+    </p>`;
+
+  const html = renderBrandedLayout({
+    preheader,
+    bodyHtml,
+  });
+
+  return {
+    to: input.recipientEmail,
+    subject: `Your ${BRAND.name} verification code`,
+    text:
+      `Hi ${displayName},\n\n` +
+      `Your ${BRAND.name} verification code is:\n\n` +
+      `    ${input.otpCode}\n\n` +
+      `This code expires in ${ttl} minutes.\n` +
+      `Do not share this code with anyone.\n\n` +
+      `If you did not request this code, please ignore this email.\n\n` +
+      `— The ${BRAND.name} team`,
+    html,
+  };
+}
+
 // ── Console implementation (default fallback) ─────────────────────────────────
 
 export class ConsoleEmailService implements EmailService {

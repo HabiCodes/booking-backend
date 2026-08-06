@@ -6,7 +6,7 @@
  * The interface matches express-rate-limit so swapping is trivial.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.apiRateLimiter = exports.resendVerificationLimiter = exports.authRateLimiter = void 0;
+exports.apiRateLimiter = exports.otpVerifyLimiter = exports.resendVerificationLimiter = exports.authRateLimiter = void 0;
 exports.rateLimiter = rateLimiter;
 const buckets = new Map();
 function prune(now) {
@@ -61,6 +61,22 @@ exports.resendVerificationLimiter = rateLimiter({
     windowMs: 60 * 60000,
     max: 5,
     message: 'Too many verification emails requested. Please try again later.',
+});
+/**
+ * Rate limiter for OTP verification.  5 attempts per rolling 15-minute
+ * window keyed on (email + IP) so one attacker can't exhaust another
+ * legitimate user's attempts.
+ */
+exports.otpVerifyLimiter = rateLimiter({
+    windowMs: 15 * 60000,
+    max: 5,
+    keyGenerator: (req) => {
+        const body = req.body;
+        const email = body?.email ? body.email.toLowerCase().trim() : '';
+        const ip = req.ip ?? 'unknown';
+        return `otp:${ip}:${email}`;
+    },
+    message: 'Too many OTP verification attempts. Please try again later.',
 });
 exports.apiRateLimiter = rateLimiter({
     windowMs: 60000,

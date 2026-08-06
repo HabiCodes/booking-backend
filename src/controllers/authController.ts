@@ -43,16 +43,56 @@ export async function registerEnhanced(req: Request, res: Response, next: NextFu
     if (!email || !password) throw new AppError('Email and password are required', 400);
     if (!validateEmail(email)) throw new AppError('Invalid email format', 400);
 
-    const result = await authService.registerWithVerification(
+    const result = await authService.requestRegistrationOtp(
       sanitizeString(email),
       username ? sanitizeString(username) : null,
       password
     );
-    res.status(201).json({
+    res.status(202).json({
       success: true,
-      data: result,
-      message: 'Account created. Please check your email to verify your account.',
+      message: result.message,
+      expiresInMinutes: result.expiresInMinutes,
     });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function verifyRegistrationOtp(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) throw new AppError('Email and OTP are required', 400);
+
+    const result = await authService.verifyRegistrationOtp(
+      sanitizeString(email),
+      String(otp).trim(),
+      req.ip ?? null,
+      req.ip ?? null,
+    );
+
+    if (!result.success) {
+      return res.status(400).json({ success: false, message: result.message });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: result.message,
+      data: result.authResult,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function resendRegistrationOtp(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { email } = req.body;
+
+    if (!email) throw new AppError('Email is required', 400);
+
+    const result = await authService.resendRegistrationOtp(sanitizeString(email));
+    res.json({ success: true, message: result.message });
   } catch (err) {
     return next(err);
   }

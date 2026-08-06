@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.register = register;
 exports.login = login;
 exports.registerEnhanced = registerEnhanced;
+exports.verifyRegistrationOtp = verifyRegistrationOtp;
+exports.resendRegistrationOtp = resendRegistrationOtp;
 exports.loginEnhanced = loginEnhanced;
 exports.verifyEmail = verifyEmail;
 exports.resendVerification = resendVerification;
@@ -56,12 +58,43 @@ async function registerEnhanced(req, res, next) {
             throw new errorHandler_1.AppError('Email and password are required', 400);
         if (!(0, validator_1.validateEmail)(email))
             throw new errorHandler_1.AppError('Invalid email format', 400);
-        const result = await authService_1.authService.registerWithVerification((0, validator_1.sanitizeString)(email), username ? (0, validator_1.sanitizeString)(username) : null, password);
-        res.status(201).json({
+        const result = await authService_1.authService.requestRegistrationOtp((0, validator_1.sanitizeString)(email), username ? (0, validator_1.sanitizeString)(username) : null, password);
+        res.status(202).json({
             success: true,
-            data: result,
-            message: 'Account created. Please check your email to verify your account.',
+            message: result.message,
+            expiresInMinutes: result.expiresInMinutes,
         });
+    }
+    catch (err) {
+        return next(err);
+    }
+}
+async function verifyRegistrationOtp(req, res, next) {
+    try {
+        const { email, otp } = req.body;
+        if (!email || !otp)
+            throw new errorHandler_1.AppError('Email and OTP are required', 400);
+        const result = await authService_1.authService.verifyRegistrationOtp((0, validator_1.sanitizeString)(email), String(otp).trim(), req.ip ?? null, req.ip ?? null);
+        if (!result.success) {
+            return res.status(400).json({ success: false, message: result.message });
+        }
+        return res.status(201).json({
+            success: true,
+            message: result.message,
+            data: result.authResult,
+        });
+    }
+    catch (err) {
+        return next(err);
+    }
+}
+async function resendRegistrationOtp(req, res, next) {
+    try {
+        const { email } = req.body;
+        if (!email)
+            throw new errorHandler_1.AppError('Email is required', 400);
+        const result = await authService_1.authService.resendRegistrationOtp((0, validator_1.sanitizeString)(email));
+        res.json({ success: true, message: result.message });
     }
     catch (err) {
         return next(err);

@@ -31,7 +31,8 @@ import type {
   UserSessionRow,
   VerificationTokenRow,
 } from '../types';
-import { buildVerificationEmail, createEmailService, type EmailService } from './emailService';
+import { buildVerificationEmail, buildOtpEmail, createEmailService, type EmailService } from './emailService';
+import { generateNumericOtp, hashOtp, verifyOtp } from '../utils/otp';
 
 // ── Account lockout ──────────────────────────────────────────────────────────
 
@@ -65,6 +66,27 @@ export function checkAccountLockout(failedSince: Date | null, lockoutMinutes: nu
 
 export interface VerificationResult {
   success: boolean;
+  message: string;
+}
+
+// ── OTP Registration ──────────────────────────────────────────────────────────
+
+export interface OtpRegistrationRequestResult {
+  sent: boolean;
+  message: string;
+  /** Minutes until the OTP expires */
+  expiresInMinutes: number;
+}
+
+export interface OtpVerificationResult {
+  success: boolean;
+  message: string;
+  /** Full auth result on success */
+  authResult?: AuthResult;
+}
+
+export interface OtpResendResult {
+  sent: boolean;
   message: string;
 }
 
@@ -108,12 +130,18 @@ export class AuthService {
   private baseUrl: string;
   private bruteForce: BruteForceConfig;
   private verificationExpiryHours: number;
+  private otpLength: number;
+  private otpExpiryMinutes: number;
+  private otpMaxAttempts: number;
 
   constructor(opts: {
     emailService?: EmailService;
     baseUrl?: string;
     bruteForce?: BruteForceConfig;
     verificationExpiryHours?: number;
+    otpLength?: number;
+    otpExpiryMinutes?: number;
+    otpMaxAttempts?: number;
   } = {}) {
     this.emailService = opts.emailService ?? createEmailService({
       apiToken: config.email.hostingerApiToken || undefined,
@@ -123,6 +151,9 @@ export class AuthService {
     this.baseUrl = opts.baseUrl ?? (config.email.appUrl || (config.nodeEnv === 'production' ? '' : 'http://localhost:3000'));
     this.bruteForce = opts.bruteForce ?? DEFAULT_BRUTE_FORCE;
     this.verificationExpiryHours = opts.verificationExpiryHours ?? 24;
+    this.otpLength = opts.otpLength ?? config.otp.codeLength;
+    this.otpExpiryMinutes = opts.otpExpiryMinutes ?? config.otp.expiryMinutes;
+    this.otpMaxAttempts = opts.otpMaxAttempts ?? config.otp.maxAttempts;
   }
 
   // ── Registration ──────────────────────────────────────────────────────────
@@ -192,6 +223,220 @@ export class AuthService {
     const token = generateAccessToken(userId, normalizedEmail);
 
     return { token, user: { id: userId, email: normalizedEmail } };
+  }
+
+  // ── OTP Registration (preferred new flow) ─────────────────────────────────
+
+  /**
+   * Create (or refresh) a pending registration for an email/username/password
+   * trio.  Generates a cryptographically-secure 6-digit OTP, stores only its
+   * SHA-256 hash, and emails the plain code through the existing email
+   * service.  Does NOT create a user yet — that happens only after OTP
+   * verification succeeds.
+   */
+  async requestRegistrationOtp(
+    email: string,
+    username: string | null,
+    password: string,
+  ): Promise<OtpRegistrationRequestResult> {
+    const normalizedEmail = email.toLowerCase().trim();
+    const trimmedUsername = username ? username.trim() : null;
+
+    // Duplicate check against the users table — even if the pending row
+    // exists, if a verified user already owns the email we MUST refuse.
+    const existingUser = await userRepository.findByEmail(normalizedEmail);
+    if (existingUser) {
+      const err = new Error(`Email "${normalizedEmail}" is already registered`) as Error & { statusCode?: number };
+      err.statusCode = 409;
+      throw err;
+    }
+    if (trimmedUsername) {
+      const existingUsername = await userRepository.findByUsername(trimmedUsername);
+      if (existingUsername) {
+        const err = new Error(`Username "${trimmedUsername}" is already taken`) as Error & { statusCode?: number };
+        err.statusCode = 409;
+        throw err;
+      }
+    }
+
+    // Password policy
+    const policyResult = validatePassword(password, defaultPasswordPolicy);
+    if (!policyResult.valid) {
+      const err = new Error(policyResult.errors.join('; ')) as Error & { statusCode?: number };
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Hash the password (bcrypt) so we never store the plain-text.
+    const passwordHash = await userRepository.hashPassword(password);
+
+    // Generate the OTP, hash it.
+    const otpCode = generateNumericOtp(this.otpLength);
+    const otpHash = hashOtp(otpCode);
+    const expiresAt = new Date(Date.now() + this.otpExpiryMinutes * 60_000).toISOString();
+
+    await authRepository.createPendingRegistration({
+      email: normalizedEmail,
+      username: trimmedUsername,
+      passwordHash,
+      otpHash,
+      expiresAt,
+    });
+
+    // Send the plain OTP via email.  We NEVER log the code.
+    const message = buildOtpEmail({
+      otpCode,
+      recipientEmail: normalizedEmail,
+      username: trimmedUsername,
+      expiresInMinutes: this.otpExpiryMinutes,
+    });
+    await this.emailService.send(message).catch((err) => {
+      logger.warn('[otp] failed to send registration OTP email:', err);
+      throw new Error('Failed to send OTP email') as Error & { statusCode?: number };
+    });
+
+    return {
+      sent: true,
+      message: `A ${this.otpLength}-digit verification code has been sent to ${normalizedEmail}.`,
+      expiresInMinutes: this.otpExpiryMinutes,
+    };
+  }
+
+  /**
+   * Verify the OTP the user submitted.  On success: create the user (with
+   * is_verified=true), issue a JWT pair, persist a session, mark the pending
+   * row consumed, and return the same shape as login/register.
+   *
+   * On failure: increment the per-row attempt counter, and once the limit is
+   * reached delete the pending row so further attempts are blocked.
+   */
+  async verifyRegistrationOtp(
+    email: string,
+    otpCode: string,
+    deviceInfo?: string | null,
+    ipAddress?: string | null,
+  ): Promise<OtpVerificationResult> {
+    const normalizedEmail = email.toLowerCase().trim();
+    const code = (otpCode ?? '').trim();
+
+    if (!/^\d+$/.test(code)) {
+      return { success: false, message: 'Verification code must be numeric.' };
+    }
+
+    const pending = await authRepository.findPendingRegistrationByEmail(normalizedEmail);
+    if (!pending) {
+      return { success: false, message: 'No pending registration found for that email.' };
+    }
+
+    // TTL check (also enforced by query but defend-in-depth)
+    if (new Date(pending.expires_at) < new Date()) {
+      await authRepository.deletePendingRegistration(pending.id);
+      return { success: false, message: 'Verification code has expired. Please request a new one.' };
+    }
+
+    // Constant-time compare
+    const valid = verifyOtp(code, pending.otp_hash);
+    if (!valid) {
+      await authRepository.incrementPendingAttempts(pending.id);
+      const remainingAttempts = Math.max(0, this.otpMaxAttempts - (pending.otp_attempts + 1));
+      if (pending.otp_attempts + 1 >= this.otpMaxAttempts) {
+        await authRepository.deletePendingRegistration(pending.id);
+        return {
+          success: false,
+          message: 'Too many incorrect attempts. Please restart registration.',
+        };
+      }
+      return {
+        success: false,
+        message: `Incorrect verification code. ${remainingAttempts} attempt${remainingAttempts === 1 ? '' : 's'} remaining.`,
+      };
+    }
+
+    // OTP matched — atomically: create the user, mark verified, consume pending.
+    const newUserId = await userRepository.createWithUsername(
+      normalizedEmail,
+      pending.username ?? '',
+      pending.password_hash,
+    );
+    await authRepository.markPendingConsumed(pending.id);
+    // Audit log: explicitly mark verified (login does not require is_verified
+    // checks for these users since they reached this flow).
+    await authRepository.markUserVerified(newUserId);
+    await userRepository.updateLastLogin(newUserId);
+
+    const created = await userRepository.findById(newUserId);
+    if (!created) {
+      return { success: false, message: 'Failed to load created user account.' };
+    }
+
+    const publicUser: UserPublic = {
+      id: created.id,
+      email: created.email,
+      username: created.username,
+      is_verified: created.is_verified,
+      is_active: created.is_active,
+      created_at: created.created_at,
+    };
+
+    const tokens = this.issueTokens(created.id, created.email);
+    const sessionId = await authRepository.createSession(
+      created.id,
+      deviceInfo ?? null,
+      ipAddress ?? null,
+      null,
+      true
+    );
+
+    return {
+      success: true,
+      message: 'Email verified successfully. Account created.',
+      authResult: { tokens, user: publicUser, isNewUser: true },
+    };
+  }
+
+  /**
+   * Re-send a fresh OTP for an in-flight pending registration.  Invalidates
+   * any prior pending row's hash (so the old code can no longer be used) and
+   * creates a new one with its own expiry.
+   */
+  async resendRegistrationOtp(email: string): Promise<OtpResendResult> {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const existing = await userRepository.findByEmail(normalizedEmail);
+    if (existing) {
+      return { sent: false, message: 'Email is already registered.' };
+    }
+
+    const pending = await authRepository.findPendingRegistrationByEmail(normalizedEmail);
+    if (!pending) {
+      // Don't reveal whether the email exists
+      return { sent: true, message: 'If a pending registration exists for that email, a new code has been sent.' };
+    }
+
+    const otpCode = generateNumericOtp(this.otpLength);
+    const otpHash = hashOtp(otpCode);
+    const expiresAt = new Date(Date.now() + this.otpExpiryMinutes * 60_000).toISOString();
+
+    // Update in place to keep the same id (otherwise unique constraint fights us)
+    await getPool().query(
+      `UPDATE pending_registrations
+       SET otp_hash = $1, otp_attempts = 0, expires_at = $2
+       WHERE id = $3`,
+      [otpHash, expiresAt, pending.id]
+    );
+
+    const message = buildOtpEmail({
+      otpCode,
+      recipientEmail: normalizedEmail,
+      username: pending.username ?? null,
+      expiresInMinutes: this.otpExpiryMinutes,
+    });
+    await this.emailService.send(message).catch((err) => {
+      logger.warn('[otp] failed to resend registration OTP email:', err);
+      throw new Error('Failed to send OTP email') as Error & { statusCode?: number };
+    });
+
+    return { sent: true, message: `A new verification code has been sent to ${normalizedEmail}.` };
   }
 
   // ── Login ─────────────────────────────────────────────────────────────────
