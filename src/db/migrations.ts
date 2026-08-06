@@ -80,7 +80,7 @@ export async function runMigrations(): Promise<string[]> {
     // Bootstrap the tracking table
     await client.query(SCHEMA_MIGRATIONS_TABLE);
 
-    const { rows: appliedRows } = await client.query<{ version: string }>(
+    const { rows: appliedRows } = await client.query(
       'SELECT version FROM schema_migrations ORDER BY version'
     );
     const appliedSet = new Set(appliedRows.map((r) => r.version));

@@ -9,9 +9,9 @@
     "seed:admin": "ts-node-dev --transpile-only src/seed/admin.ts",
     "db:migrate": "ts-node-dev --transpile-only src/db/migrate.ts",
     "docs:build": "node scripts/build-openapi.js",
-    "test": "node --test",
-    "test:unit": "node --test tests/unit",
-    "test:integration": "node --test tests/integration",
+    "test": "tsc -p tsconfig.test.json && NODE_ENV=test node --test '.test-build/tests/**/*.test.js'",
+    "test:unit": "tsc -p tsconfig.test.json && NODE_ENV=test node --test '.test-build/tests/unit/**/*.test.js'",
+    "test:integration": "tsc -p tsconfig.test.json && NODE_ENV=test node --test '.test-build/tests/integration/**/*.test.js'",
     "test:coverage": "node --test --experimental-test-coverage"
   },
   "dependencies": {

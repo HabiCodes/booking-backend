@@ -119,17 +119,19 @@ app.use(errorHandler);
 
 async function start() {
   try {
-    // Verify DB connection
-    const pool = getPool();
+    // Verify DB connection (optional — server still runs without DB)
+    try {
+      const pool = getPool();
+      const conn = await pool.connect();
+      conn.release();
+      logger.info('Database connection verified');
 
-    const conn = await pool.connect();
-    conn.release();
-
-    logger.info('Database connection verified');
-
-    await runMigrations();
-
-    logger.info('Database migrations completed');
+      await runMigrations();
+      logger.info('Database migrations completed');
+    } catch (dbErr) {
+      const message = dbErr instanceof Error ? dbErr.message : String(dbErr);
+      logger.warn('Database connection failed (server will start without DB): ' + message);
+    }
 
     // Init Socket.IO
     initSocketServer(server);
@@ -172,7 +174,10 @@ async function initialBroadcast() {
   }
 }
 
-start().then(() => initialBroadcast());
+// Auto-start only when not in test mode (tests import server.ts for the app object)
+if (process.env.NODE_ENV !== 'test') {
+  start().then(() => initialBroadcast());
+}
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {

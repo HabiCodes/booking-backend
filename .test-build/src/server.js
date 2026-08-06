@@ -96,13 +96,19 @@ app.use(errorHandler_1.errorHandler);
 // ── Initialize ────────────────────────────────────────────────────────────────
 async function start() {
     try {
-        // Verify DB connection
-        const pool = (0, pool_1.getPool)();
-        const conn = await pool.connect();
-        conn.release();
-        logger_1.logger.info('Database connection verified');
-        await (0, migrations_1.runMigrations)();
-        logger_1.logger.info('Database migrations completed');
+        // Verify DB connection (optional — server still runs without DB)
+        try {
+            const pool = (0, pool_1.getPool)();
+            const conn = await pool.connect();
+            conn.release();
+            logger_1.logger.info('Database connection verified');
+            await (0, migrations_1.runMigrations)();
+            logger_1.logger.info('Database migrations completed');
+        }
+        catch (dbErr) {
+            const message = dbErr instanceof Error ? dbErr.message : String(dbErr);
+            logger_1.logger.warn('Database connection failed (server will start without DB): ' + message);
+        }
         // Init Socket.IO
         (0, sockets_1.initSocketServer)(server);
         // Ensure upload directories exist
@@ -141,7 +147,10 @@ async function initialBroadcast() {
         // silent — startup shouldn't fail if DB is empty
     }
 }
-start().then(() => initialBroadcast());
+// Auto-start only when not in test mode (tests import server.ts for the app object)
+if (process.env.NODE_ENV !== 'test') {
+    start().then(() => initialBroadcast());
+}
 // Graceful shutdown
 process.on('SIGTERM', async () => {
     logger_1.logger.info('SIGTERM received, shutting down gracefully');
