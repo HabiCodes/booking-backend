@@ -1,8 +1,8 @@
 "use strict";
 /**
- * Unit tests for the email service layer (HTML builders + Resend client).
+ * Unit tests for the email service layer (HTML builders + Hostinger client).
  *
- * These tests mock `fetch` so they never touch the real Resend API.
+ * These tests mock `fetch` so they never touch the real Hostinger Mail API.
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -112,8 +112,8 @@ const emailService_1 = require("../../src/services/emailService");
         await strict_1.default.doesNotReject(() => svc.send({ to: 'x@y.com', subject: 'test', text: 'hello' }));
     });
 });
-// ── ResendEmailService ────────────────────────────────────────────────────────
-(0, node_test_1.describe)('email > ResendEmailService', () => {
+// ── HostingerEmailService ──────────────────────────────────────────────────────
+(0, node_test_1.describe)('email > HostingerEmailService', () => {
     let originalFetch;
     let calls;
     (0, node_test_1.beforeEach)(() => {
@@ -164,10 +164,11 @@ const emailService_1 = require("../../src/services/emailService");
             delete globalThis.fetch;
         }
     });
-    (0, node_test_1.it)('POSTs to the emails endpoint with the correct payload', async () => {
-        const svc = new emailService_1.ResendEmailService({
-            apiKey: 'test-key',
+    (0, node_test_1.it)('POSTs to the messages/send endpoint with the correct payload', async () => {
+        const svc = new emailService_1.HostingerEmailService({
+            apiToken: 'test-token',
             from: 'no-reply@bigmembres.in',
+            mailboxId: 'mb-123',
         });
         await svc.send({
             to: 'user@example.com',
@@ -175,7 +176,8 @@ const emailService_1 = require("../../src/services/emailService");
             html: '<p>body</p>',
         });
         strict_1.default.strictEqual(calls.length, 1);
-        strict_1.default.ok(calls[0].url.includes('/emails'));
+        strict_1.default.ok(calls[0].url.includes('/mailboxes/mb-123'));
+        strict_1.default.ok(calls[0].url.endsWith('/send'));
         strict_1.default.strictEqual(calls[0].opts.method, 'POST');
         const body = JSON.parse(calls[0].opts.body || '{}');
         strict_1.default.deepStrictEqual(body.to, ['user@example.com']);
@@ -183,10 +185,10 @@ const emailService_1 = require("../../src/services/emailService");
         strict_1.default.strictEqual(body.html, '<p>body</p>');
         strict_1.default.strictEqual(body.from, 'no-reply@bigmembres.in');
     });
-    (0, node_test_1.it)('includes auth header', async () => {
-        const svc = new emailService_1.ResendEmailService({ apiKey: 'sk-test', from: 'from@x.com' });
+    (0, node_test_1.it)('uses apiToken (no Bearer prefix) in Authorization header', async () => {
+        const svc = new emailService_1.HostingerEmailService({ apiToken: 'h-token', from: 'from@x.com', mailboxId: 'mb-1' });
         await svc.send({ to: 'u@x.com', subject: 's', text: 't' });
-        strict_1.default.strictEqual(calls[0].opts.headers.Authorization, 'Bearer sk-test');
+        strict_1.default.strictEqual(calls[0].opts.headers.Authorization, 'h-token');
     });
     (0, node_test_1.it)('retries on 503 then succeeds', async () => {
         let attempt = 0;
@@ -202,7 +204,7 @@ const emailService_1 = require("../../src/services/emailService");
             });
         };
         try {
-            const svc = new emailService_1.ResendEmailService({ apiKey: 'k', from: 'f@x.com', retries: 2 });
+            const svc = new emailService_1.HostingerEmailService({ apiToken: 'k', from: 'f@x.com', mailboxId: 'mb-1', retries: 2 });
             await svc.send({ to: 'u@x.com', subject: 's', text: 't' });
             strict_1.default.strictEqual(attempt, 2);
         }
@@ -214,45 +216,57 @@ const emailService_1 = require("../../src/services/emailService");
         globalThis.fetch = async () => {
             return new Response('Still 503', { status: 503 });
         };
-        const svc = new emailService_1.ResendEmailService({ apiKey: 'k', from: 'f@x.com', retries: 1 });
+        const svc = new emailService_1.HostingerEmailService({ apiToken: 'k', from: 'f@x.com', mailboxId: 'mb-1', retries: 1 });
         await strict_1.default.rejects(() => svc.send({ to: 'u@x.com', subject: 's', text: 't' }), /Failed to send email/);
     });
-    (0, node_test_1.it)('throws on construction with empty apiKey', () => {
+    (0, node_test_1.it)('throws on construction with empty apiToken', () => {
         strict_1.default.throws(() => {
-            new emailService_1.ResendEmailService({ apiKey: '', from: 'f@x.com' });
-        }, /apiKey is required/);
+            new emailService_1.HostingerEmailService({ apiToken: '', from: 'f@x.com', mailboxId: 'mb-1' });
+        }, /apiToken is required/);
     });
     (0, node_test_1.it)('throws on construction with empty from', () => {
         strict_1.default.throws(() => {
-            new emailService_1.ResendEmailService({ apiKey: 'k', from: '' });
+            new emailService_1.HostingerEmailService({ apiToken: 'k', from: '', mailboxId: 'mb-1' });
         }, /from address is required/);
+    });
+    (0, node_test_1.it)('throws on construction with empty mailboxId', () => {
+        strict_1.default.throws(() => {
+            new emailService_1.HostingerEmailService({ apiToken: 'k', from: 'f@x.com', mailboxId: '' });
+        }, /mailboxId is required/);
     });
 });
 // ── createEmailService (factory) ──────────────────────────────────────────────
 (0, node_test_1.describe)('email > createEmailService', () => {
-    const origApiKey = process.env.RESEND_API_KEY;
+    const origApiToken = process.env.HOSTINGER_API_TOKEN;
+    const origMailboxId = process.env.HOSTINGER_MAILBOX_ID;
     const origFrom = process.env.EMAIL_FROM;
     (0, node_test_1.beforeEach)(() => {
-        delete process.env.RESEND_API_KEY;
+        delete process.env.HOSTINGER_API_TOKEN;
+        delete process.env.HOSTINGER_MAILBOX_ID;
         delete process.env.EMAIL_FROM;
     });
     (0, node_test_1.afterEach)(() => {
-        if (origApiKey !== undefined)
-            process.env.RESEND_API_KEY = origApiKey;
+        if (origApiToken !== undefined)
+            process.env.HOSTINGER_API_TOKEN = origApiToken;
         else
-            delete process.env.RESEND_API_KEY;
+            delete process.env.HOSTINGER_API_TOKEN;
+        if (origMailboxId !== undefined)
+            process.env.HOSTINGER_MAILBOX_ID = origMailboxId;
+        else
+            delete process.env.HOSTINGER_MAILBOX_ID;
         if (origFrom !== undefined)
             process.env.EMAIL_FROM = origFrom;
         else
             delete process.env.EMAIL_FROM;
     });
-    (0, node_test_1.it)('returns a ConsoleEmailService when RESEND_API_KEY is not set', () => {
+    (0, node_test_1.it)('returns a ConsoleEmailService when HOSTINGER_API_TOKEN is not set', () => {
         const svc = (0, emailService_1.createEmailService)();
         strict_1.default.ok(svc instanceof emailService_1.ConsoleEmailService);
     });
-    (0, node_test_1.it)('returns a ResendEmailService when RESEND_API_KEY is set', () => {
-        process.env.RESEND_API_KEY = 'sk-live';
+    (0, node_test_1.it)('returns a HostingerEmailService when HOSTINGER_API_TOKEN is set', () => {
+        process.env.HOSTINGER_API_TOKEN = 'h-token';
+        process.env.HOSTINGER_MAILBOX_ID = 'mb-abc';
         const svc = (0, emailService_1.createEmailService)();
-        strict_1.default.ok(svc instanceof emailService_1.ResendEmailService);
+        strict_1.default.ok(svc instanceof emailService_1.HostingerEmailService);
     });
 });

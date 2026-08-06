@@ -60,8 +60,9 @@ function buildTokenPayload(verificationToken) {
 class AuthService {
     constructor(opts = {}) {
         this.emailService = opts.emailService ?? (0, emailService_1.createEmailService)({
-            apiKey: config_1.config.email.resendApiKey || undefined,
+            apiToken: config_1.config.email.hostingerApiToken || undefined,
             from: config_1.config.email.from,
+            mailboxId: config_1.config.email.hostingerMailboxId || undefined,
         });
         this.baseUrl = opts.baseUrl ?? (config_1.config.email.appUrl || (config_1.config.nodeEnv === 'production' ? '' : 'http://localhost:3000'));
         this.bruteForce = opts.bruteForce ?? DEFAULT_BRUTE_FORCE;

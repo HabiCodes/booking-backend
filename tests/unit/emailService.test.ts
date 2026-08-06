@@ -1,7 +1,7 @@
 /**
- * Unit tests for the email service layer (HTML builders + Resend client).
+ * Unit tests for the email service layer (HTML builders + Hostinger client).
  *
- * These tests mock `fetch` so they never touch the real Resend API.
+ * These tests mock `fetch` so they never touch the real Hostinger Mail API.
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -13,7 +13,7 @@ import {
   escapeHtml,
   renderBrandedLayout,
   BRAND,
-  ResendEmailService,
+  HostingerEmailService,
   createEmailService,
   ConsoleEmailService,
 } from '../../src/services/emailService';
@@ -138,9 +138,9 @@ describe('email > ConsoleEmailService', () => {
   });
 });
 
-// ── ResendEmailService ────────────────────────────────────────────────────────
+// ── HostingerEmailService ──────────────────────────────────────────────────────
 
-describe('email > ResendEmailService', () => {
+describe('email > HostingerEmailService', () => {
   let originalFetch: typeof globalThis.fetch | undefined;
   let calls: Array<{ url: string; opts: { method: string; body?: string; headers: Record<string, string> } }>;
 
@@ -189,10 +189,11 @@ describe('email > ResendEmailService', () => {
     }
   });
 
-  it('POSTs to the emails endpoint with the correct payload', async () => {
-    const svc = new ResendEmailService({
-      apiKey: 'test-key',
+  it('POSTs to the messages/send endpoint with the correct payload', async () => {
+    const svc = new HostingerEmailService({
+      apiToken: 'test-token',
       from: 'no-reply@bigmembres.in',
+      mailboxId: 'mb-123',
     });
     await svc.send({
       to: 'user@example.com',
@@ -201,7 +202,8 @@ describe('email > ResendEmailService', () => {
     });
 
     assert.strictEqual(calls.length, 1);
-    assert.ok(calls[0]!.url.includes('/emails'));
+    assert.ok(calls[0]!.url.includes('/mailboxes/mb-123'));
+    assert.ok(calls[0]!.url.endsWith('/send'));
     assert.strictEqual(calls[0]!.opts.method, 'POST');
     const body = JSON.parse(calls[0]!.opts.body || '{}');
     assert.deepStrictEqual(body.to, ['user@example.com']);
@@ -210,10 +212,10 @@ describe('email > ResendEmailService', () => {
     assert.strictEqual(body.from, 'no-reply@bigmembres.in');
   });
 
-  it('includes auth header', async () => {
-    const svc = new ResendEmailService({ apiKey: 'sk-test', from: 'from@x.com' });
+  it('uses apiToken (no Bearer prefix) in Authorization header', async () => {
+    const svc = new HostingerEmailService({ apiToken: 'h-token', from: 'from@x.com', mailboxId: 'mb-1' });
     await svc.send({ to: 'u@x.com', subject: 's', text: 't' });
-    assert.strictEqual(calls[0]!.opts.headers.Authorization, 'Bearer sk-test');
+    assert.strictEqual(calls[0]!.opts.headers.Authorization, 'h-token');
   });
 
   it('retries on 503 then succeeds', async () => {
@@ -231,7 +233,7 @@ describe('email > ResendEmailService', () => {
     };
 
     try {
-      const svc = new ResendEmailService({ apiKey: 'k', from: 'f@x.com', retries: 2 });
+      const svc = new HostingerEmailService({ apiToken: 'k', from: 'f@x.com', mailboxId: 'mb-1', retries: 2 });
       await svc.send({ to: 'u@x.com', subject: 's', text: 't' });
       assert.strictEqual(attempt, 2);
     } finally {
@@ -244,52 +246,63 @@ describe('email > ResendEmailService', () => {
       return new Response('Still 503', { status: 503 }) as any;
     };
 
-    const svc = new ResendEmailService({ apiKey: 'k', from: 'f@x.com', retries: 1 });
+    const svc = new HostingerEmailService({ apiToken: 'k', from: 'f@x.com', mailboxId: 'mb-1', retries: 1 });
     await assert.rejects(
       () => svc.send({ to: 'u@x.com', subject: 's', text: 't' }),
       /Failed to send email/,
     );
   });
 
-  it('throws on construction with empty apiKey', () => {
+  it('throws on construction with empty apiToken', () => {
     assert.throws(() => {
-      new ResendEmailService({ apiKey: '', from: 'f@x.com' });
-    }, /apiKey is required/);
+      new HostingerEmailService({ apiToken: '', from: 'f@x.com', mailboxId: 'mb-1' });
+    }, /apiToken is required/);
   });
 
   it('throws on construction with empty from', () => {
     assert.throws(() => {
-      new ResendEmailService({ apiKey: 'k', from: '' });
+      new HostingerEmailService({ apiToken: 'k', from: '', mailboxId: 'mb-1' });
     }, /from address is required/);
+  });
+
+  it('throws on construction with empty mailboxId', () => {
+    assert.throws(() => {
+      new HostingerEmailService({ apiToken: 'k', from: 'f@x.com', mailboxId: '' });
+    }, /mailboxId is required/);
   });
 });
 
 // ── createEmailService (factory) ──────────────────────────────────────────────
 
 describe('email > createEmailService', () => {
-  const origApiKey = process.env.RESEND_API_KEY;
+  const origApiToken = process.env.HOSTINGER_API_TOKEN;
+  const origMailboxId = process.env.HOSTINGER_MAILBOX_ID;
   const origFrom = process.env.EMAIL_FROM;
 
   beforeEach(() => {
-    delete process.env.RESEND_API_KEY;
+    delete process.env.HOSTINGER_API_TOKEN;
+    delete process.env.HOSTINGER_MAILBOX_ID;
     delete process.env.EMAIL_FROM;
   });
 
   afterEach(() => {
-    if (origApiKey !== undefined) process.env.RESEND_API_KEY = origApiKey;
-    else delete process.env.RESEND_API_KEY;
+    if (origApiToken !== undefined) process.env.HOSTINGER_API_TOKEN = origApiToken;
+    else delete process.env.HOSTINGER_API_TOKEN;
+    if (origMailboxId !== undefined) process.env.HOSTINGER_MAILBOX_ID = origMailboxId;
+    else delete process.env.HOSTINGER_MAILBOX_ID;
     if (origFrom !== undefined) process.env.EMAIL_FROM = origFrom;
     else delete process.env.EMAIL_FROM;
   });
 
-  it('returns a ConsoleEmailService when RESEND_API_KEY is not set', () => {
+  it('returns a ConsoleEmailService when HOSTINGER_API_TOKEN is not set', () => {
     const svc = createEmailService();
     assert.ok(svc instanceof ConsoleEmailService);
   });
 
-  it('returns a ResendEmailService when RESEND_API_KEY is set', () => {
-    process.env.RESEND_API_KEY = 'sk-live';
+  it('returns a HostingerEmailService when HOSTINGER_API_TOKEN is set', () => {
+    process.env.HOSTINGER_API_TOKEN = 'h-token';
+    process.env.HOSTINGER_MAILBOX_ID = 'mb-abc';
     const svc = createEmailService();
-    assert.ok(svc instanceof ResendEmailService);
+    assert.ok(svc instanceof HostingerEmailService);
   });
 });

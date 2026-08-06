@@ -2,22 +2,22 @@
 /**
  * Email delivery abstraction.
  *
- * Production implementation calls the Resend HTTP API directly (Node 22 has
- * native `fetch`, no SDK needed).  A console-based implementation is kept
+ * Production implementation calls the Hostinger Mail REST API directly (Node 22
+ * has native `fetch`, no SDK needed).  A console-based implementation is kept
  * as the default fallback for development / test environments where no
- * RESEND_API_KEY is configured.
+ * HOSTINGER_API_TOKEN is configured.
  *
  * Each call to `send()` is wrapped in timeout + retry-with-backoff so a
- * flaky SMTP gateway cannot stall registration or password-reset flows.
+ * flaky mail gateway cannot stall registration or password-reset flows.
  *
  * Selecting the implementation:
  *
  *   const svc = createDefaultEmailService();
- *   // → ResendEmailService if RESEND_API_KEY is set
+ *   // → HostingerEmailService if HOSTINGER_API_TOKEN is set
  *   // → ConsoleEmailService otherwise
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ResendEmailService = exports.ConsoleEmailService = exports.BRAND = void 0;
+exports.HostingerEmailService = exports.ConsoleEmailService = exports.BRAND = void 0;
 exports.escapeHtml = escapeHtml;
 exports.renderBrandedLayout = renderBrandedLayout;
 exports.buildVerificationEmail = buildVerificationEmail;
@@ -96,7 +96,7 @@ function renderBrandedLayout(opts) {
                 <a href="mailto:${escapeHtml(exports.BRAND.supportEmail)}" style="color:${exports.BRAND.primaryColor};text-decoration:none;">${escapeHtml(exports.BRAND.supportEmail)}</a>.
               </div>
               <div style="margin-top:18px;color:#9ca3af;font-size:12px;">
-                © ${year} ${escapeHtml(exports.BRAND.name)}. All rights reserved.
+                &copy; ${year} ${escapeHtml(exports.BRAND.name)}. All rights reserved.
               </div>
             </td>
           </tr>
@@ -212,28 +212,28 @@ class ConsoleEmailService {
 }
 exports.ConsoleEmailService = ConsoleEmailService;
 /**
- * Send emails via Resend's HTTP API.
+ * Send emails via the Hostinger Mail REST API.
  *
- * We do not depend on the `resend` SDK because Node 22 ships native `fetch`,
- * `setTimeout`/`AbortController` — pulling in the SDK would only add bytes
- * and one transitive dependency surface we don't need.
- *
- * Errors are normalised so callers (auth service) can simply `await send()`:
- *  - Timeout / 5xx → retry with exponential backoff
- *  - 4xx (other than 429) → fail after one attempt with a descriptive error
- *  - Final failure throws so the caller can decide how to react
+ * The Hostinger endpoint expects the token in a plain `Authorization` header
+ * (not `Bearer`-prefixed) and accepts recipients as a JSON array rather than
+ * the nested structure Resend used.  Timeout / 5xx failures are retried with
+ * exponential backoff; 4xx (other than 429) fail immediately.
  */
-class ResendEmailService {
+class HostingerEmailService {
     constructor(cfg) {
-        if (!cfg.apiKey || cfg.apiKey.trim().length === 0) {
-            throw new Error('ResendEmailService: apiKey is required');
+        if (!cfg.apiToken || cfg.apiToken.trim().length === 0) {
+            throw new Error('HostingerEmailService: apiToken is required');
         }
         if (!cfg.from || cfg.from.trim().length === 0) {
-            throw new Error('ResendEmailService: from address is required');
+            throw new Error('HostingerEmailService: from address is required');
         }
-        this.apiKey = cfg.apiKey;
+        if (!cfg.mailboxId || cfg.mailboxId.trim().length === 0) {
+            throw new Error('HostingerEmailService: mailboxId is required');
+        }
+        this.apiToken = cfg.apiToken;
         this.from = cfg.from;
-        this.apiBaseUrl = cfg.apiBaseUrl ?? 'https://api.resend.com';
+        this.mailboxId = cfg.mailboxId;
+        this.apiBaseUrl = `https://api.mail.hostinger.com/api/v1/mailboxes/${this.mailboxId}`;
         this.timeoutMs = cfg.timeoutMs ?? 10000;
         this.retries = cfg.retries ?? 2;
     }
@@ -245,7 +245,7 @@ class ResendEmailService {
             to: [message.to],
             subject: message.subject,
         };
-        // Resend accepts html/text — prefer both so the client picks the best render.
+        // Hostinger accepts html/text alongside subject in the same payload.
         if (message.html)
             payload.html = message.html;
         if (message.text)
@@ -266,7 +266,7 @@ class ResendEmailService {
             catch (err) {
                 lastError = err;
                 const classified = classifyError(err);
-                logger_1.logger.warn(`[email:resend] send attempt ${attempt}/${maxAttempts} failed (${classified.code}): ` +
+                logger_1.logger.warn(`[email:hostinger] send attempt ${attempt}/${maxAttempts} failed (${classified.code}): ` +
                     (err instanceof Error ? err.message : String(err)));
                 if (classified.permanent) {
                     // 4xx other than 429 — no point retrying
@@ -278,17 +278,17 @@ class ResendEmailService {
             }
         }
         const detail = lastError instanceof Error ? lastError.message : String(lastError);
-        logger_1.logger.error(`[email:resend] giving up on email to ${message.to}: ${detail}`);
+        logger_1.logger.error(`[email:hostinger] giving up on email to ${message.to}: ${detail}`);
         throw new Error(`Failed to send email to ${message.to}: ${detail}`);
     }
     async sendOnce(payload) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), this.timeoutMs);
         try {
-            const response = await fetch(`${this.apiBaseUrl}/emails`, {
+            const response = await fetch(`${this.apiBaseUrl}/send`, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
+                    Authorization: this.apiToken,
                     'Content-Type': 'application/json',
                     'User-Agent': `${exports.BRAND.name}-backend/1.0`,
                 },
@@ -300,24 +300,24 @@ class ResendEmailService {
                 try {
                     const body = (await response.json());
                     if (body?.id)
-                        logger_1.logger.debug(`[email:resend] accepted message id=${body.id}`);
+                        logger_1.logger.debug(`[email:hostinger] accepted message id=${body.id}`);
                 }
                 catch {
-                    /* body parsing is best-effort */
+                    // body parsing is best-effort
                 }
                 return;
             }
             // Build an error object that classifyError can read
             const text = await safeReadText(response);
-            const err = new Error(`Resend API ${response.status}: ${text || response.statusText}`);
+            const err = new Error(`Hostinger API ${response.status}: ${text || response.statusText}`);
             err.status = response.status;
-            err.code = `resend_${response.status}`;
+            err.code = `hostinger_${response.status}`;
             throw err;
         }
         catch (err) {
             if (err.name === 'AbortError') {
-                const timeoutErr = new Error(`Resend request timed out after ${this.timeoutMs}ms`);
-                timeoutErr.code = 'resend_timeout';
+                const timeoutErr = new Error(`Hostinger request timed out after ${this.timeoutMs}ms`);
+                timeoutErr.code = 'hostinger_timeout';
                 throw timeoutErr;
             }
             throw err;
@@ -327,7 +327,7 @@ class ResendEmailService {
         }
     }
 }
-exports.ResendEmailService = ResendEmailService;
+exports.HostingerEmailService = HostingerEmailService;
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function classifyError(err) {
     const e = err;
@@ -362,13 +362,14 @@ async function safeReadText(response) {
     }
 }
 function createEmailService(opts = {}) {
-    const apiKey = (opts.apiKey ?? process.env.RESEND_API_KEY ?? '').trim();
+    const apiToken = (opts.apiToken ?? process.env.HOSTINGER_API_TOKEN ?? '').trim();
     const from = (opts.from ?? process.env.EMAIL_FROM ?? exports.BRAND.supportEmail).trim();
-    if (!apiKey) {
-        logger_1.logger.warn('[email] RESEND_API_KEY not set — falling back to ConsoleEmailService. ' +
-            'Set RESEND_API_KEY in production to actually send mail.');
+    const mailboxId = (opts.mailboxId ?? process.env.HOSTINGER_MAILBOX_ID ?? '').trim();
+    if (!apiToken) {
+        logger_1.logger.warn('[email] HOSTINGER_API_TOKEN not set — falling back to ConsoleEmailService. ' +
+            'Set HOSTINGER_API_TOKEN in production to actually send mail.');
         return new ConsoleEmailService();
     }
-    logger_1.logger.info(`[email] Using Resend sender "${from}".`);
-    return new ResendEmailService({ apiKey, from });
+    logger_1.logger.info(`[email] Using Hostinger sender "${from}".`);
+    return new HostingerEmailService({ apiToken, from, mailboxId });
 }

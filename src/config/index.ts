@@ -112,15 +112,19 @@ export const config = {
     bannerIdealHeight: 400,
   },
 
-  // ── Email / Resend ──────────────────────────────────────────────────────────
+  // ── Email / Hostinger ─────────────────────────────────────────────────────────
   email: {
     /**
-     * Resend API key. If absent, the app logs email content to the console
-     * instead of actually sending.
+     * Hostinger Mail API token. If absent, the app logs email content to the
+     * console instead of actually sending.
      */
-    resendApiKey: process.env.RESEND_API_KEY || '',
+    hostingerApiToken: process.env.HOSTINGER_API_TOKEN || '',
     /**
-     * From address for outbound emails. Must be a verified domain in Resend.
+     * Hostinger mailbox identifier. Used to build the per-mailbox send URL.
+     */
+    hostingerMailboxId: process.env.HOSTINGER_MAILBOX_ID || '',
+    /**
+     * From address for outbound emails.
      */
     from: process.env.EMAIL_FROM || 'info@bigmembres.in',
     /**

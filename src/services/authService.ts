@@ -116,8 +116,9 @@ export class AuthService {
     verificationExpiryHours?: number;
   } = {}) {
     this.emailService = opts.emailService ?? createEmailService({
-      apiKey: config.email.resendApiKey || undefined,
+      apiToken: config.email.hostingerApiToken || undefined,
       from: config.email.from,
+      mailboxId: config.email.hostingerMailboxId || undefined,
     });
     this.baseUrl = opts.baseUrl ?? (config.email.appUrl || (config.nodeEnv === 'production' ? '' : 'http://localhost:3000'));
     this.bruteForce = opts.bruteForce ?? DEFAULT_BRUTE_FORCE;

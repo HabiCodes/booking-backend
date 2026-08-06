@@ -84,10 +84,10 @@ function validateEnv() {
     if (isProd && process.env.CORS_ORIGIN === '*') {
         errors.push('CORS_ORIGIN=* is not allowed in production.');
     }
-    // Email sanity — warn but don't fail; in production missing the Resend key
-    // means customers won't get verification mails, but the server can run.
-    if (isProd && !process.env.RESEND_API_KEY) {
-        warnings.push('RESEND_API_KEY is not set. Email verification will be logged to the console only.');
+    // Email sanity — warn but don't fail; in production missing the Hostinger
+    // token means customers won't get verification mails, but the server can run.
+    if (isProd && !process.env.HOSTINGER_API_TOKEN) {
+        warnings.push('HOSTINGER_API_TOKEN is not set. Email verification will be logged to the console only.');
     }
     return { valid: errors.length === 0, errors, warnings };
 }
