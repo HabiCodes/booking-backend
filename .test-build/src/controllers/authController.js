@@ -79,10 +79,12 @@ async function loginEnhanced(req, res, next) {
 }
 async function verifyEmail(req, res, next) {
     try {
-        const { token } = req.body;
-        if (!token)
-            throw new errorHandler_1.AppError('Verification token is required', 400);
-        const result = await authService_1.authService.verifyEmail(token);
+        // GET /api/v1/auth/verify-email?token=... — token comes from the query
+        // string so the endpoint can be triggered from the email link.
+        const rawToken = req.query.token ?? req.body?.token;
+        if (!rawToken)
+            throw new errorHandler_1.AppError('Verification token is required. Use ?token=...', 400);
+        const result = await authService_1.authService.verifyEmail(rawToken);
         if (!result.success) {
             return res.status(400).json({ success: false, message: result.message });
         }

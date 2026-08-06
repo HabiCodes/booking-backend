@@ -111,6 +111,26 @@ export const config = {
     bannerIdealWidth: 1600,
     bannerIdealHeight: 400,
   },
+
+  // ── Email / Resend ──────────────────────────────────────────────────────────
+  email: {
+    /**
+     * Resend API key. If absent, the app logs email content to the console
+     * instead of actually sending.
+     */
+    resendApiKey: process.env.RESEND_API_KEY || '',
+    /**
+     * From address for outbound emails. Must be a verified domain in Resend.
+     */
+    from: process.env.EMAIL_FROM || 'info@bigmembres.in',
+    /**
+     * Public base URL used when building verification / password-reset links.
+     * Falls back to APP_URL then to a sensible default.
+     */
+    appUrl: process.env.APP_URL || '',
+    // Timeout per outbound email request (ms)
+    timeoutMs: 10_000,
+  },
 } as const;
 
 export type AppConfig = typeof config;

@@ -11,8 +11,9 @@ router.post('/login', authController_1.login);
 // ── Enhanced endpoints ──────────────────────────────────────────────────────
 router.post('/register-enhanced', rateLimiter_1.authRateLimiter, authController_1.registerEnhanced);
 router.post('/login-enhanced', rateLimiter_1.authRateLimiter, authController_1.loginEnhanced);
-router.post('/verify-email', authController_1.verifyEmail);
-router.post('/resend-verification', rateLimiter_1.authRateLimiter, authController_1.resendVerification);
+// GET so the verification link in the email is a plain anchor href
+router.get('/verify-email', authController_1.verifyEmail);
+router.post('/resend-verification', rateLimiter_1.resendVerificationLimiter, authController_1.resendVerification);
 router.post('/refresh-token', authController_1.refreshToken);
 router.post('/logout', authController_1.logout);
 router.post('/logout-all', auth_1.authMiddleware, authController_1.logoutAll);

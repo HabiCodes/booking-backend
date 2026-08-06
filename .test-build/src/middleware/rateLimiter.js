@@ -6,7 +6,7 @@
  * The interface matches express-rate-limit so swapping is trivial.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.apiRateLimiter = exports.authRateLimiter = void 0;
+exports.apiRateLimiter = exports.resendVerificationLimiter = exports.authRateLimiter = void 0;
 exports.rateLimiter = rateLimiter;
 const buckets = new Map();
 function prune(now) {
@@ -51,6 +51,16 @@ exports.authRateLimiter = rateLimiter({
     windowMs: 15 * 60000,
     max: 20,
     message: 'Too many authentication attempts, please try again later.',
+});
+/**
+ * Rate limiter for email resend.  Tighter than authRateLimiter because each
+ * request triggers an outbound email (costly and spammy).  Allowed: 5
+ * requests per rolling hour from the same IP / identity.
+ */
+exports.resendVerificationLimiter = rateLimiter({
+    windowMs: 60 * 60000,
+    max: 5,
+    message: 'Too many verification emails requested. Please try again later.',
 });
 exports.apiRateLimiter = rateLimiter({
     windowMs: 60000,

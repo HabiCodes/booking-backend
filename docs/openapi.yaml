@@ -245,13 +245,86 @@ paths:
         200:
           description: User profile
   /auth/verify-email:
+    get:
+      tags:
+        - Auth
+      summary: Verify email address using a token from the verification link
+      description: |
+        Called by the user clicking the verification link sent to their email.
+        The token is delivered in the `token` query parameter and used to mark
+        the user's email as verified, then the token is invalidated.
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+          description: One-time verification token from the email body
+      responses:
+        '200':
+          description: Email verified successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Email verified successfully. You can now log in.
+        '400':
+          description: Missing or invalid / expired token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Invalid or expired verification token.
+  /auth/resend-verification:
     post:
       tags:
         - Auth
-      summary: Verify email with token
+      summary: Resend the email verification link
+      description: |
+        Triggers a new verification email for an account whose email is still
+        unverified.  Rate-limited (5 requests / hour / IP).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
       responses:
-        200:
-          description: Email verified
+        '200':
+          description: Always returns success (no user enumeration)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: If an account with that email exists, a verification link has been sent.
+        '400':
+          description: Validation error (e.g. missing email)
+        '429':
+          description: Too many requests
   /scan/verify:
     post:
       tags:

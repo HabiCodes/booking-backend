@@ -31,7 +31,7 @@ import type {
   UserSessionRow,
   VerificationTokenRow,
 } from '../types';
-import { buildVerificationEmail, type EmailMessage, type EmailService } from './emailService';
+import { buildVerificationEmail, createEmailService, type EmailService } from './emailService';
 
 // ── Account lockout ──────────────────────────────────────────────────────────
 
@@ -115,10 +115,11 @@ export class AuthService {
     bruteForce?: BruteForceConfig;
     verificationExpiryHours?: number;
   } = {}) {
-    this.emailService = opts.emailService ?? new (require('./emailService').ConsoleEmailService)();
-    this.baseUrl = opts.baseUrl ?? (config.nodeEnv === 'production'
-      ? (process.env.APP_URL ?? '')
-      : 'http://localhost:3000');
+    this.emailService = opts.emailService ?? createEmailService({
+      apiKey: config.email.resendApiKey || undefined,
+      from: config.email.from,
+    });
+    this.baseUrl = opts.baseUrl ?? (config.email.appUrl || (config.nodeEnv === 'production' ? '' : 'http://localhost:3000'));
     this.bruteForce = opts.bruteForce ?? DEFAULT_BRUTE_FORCE;
     this.verificationExpiryHours = opts.verificationExpiryHours ?? 24;
   }
@@ -159,7 +160,12 @@ export class AuthService {
 
     // Send email
     const verificationLink = generateVerificationLink(this.baseUrl, rawToken);
-    const message = buildVerificationEmail(verificationLink, normalizedEmail, username ?? null);
+    const message = buildVerificationEmail({
+      verificationLink,
+      recipientEmail: normalizedEmail,
+      username: username ?? null,
+      expiresInHours: this.verificationExpiryHours,
+    });
     await this.emailService.send(message).catch((err) => logger.warn('Email send failed:', err));
 
     // Create tokens (user is not yet verified, but tokens are valid)
@@ -373,7 +379,12 @@ export class AuthService {
     await authRepository.createVerificationToken(user.id, tokenHash, expiresAt);
 
     const verificationLink = generateVerificationLink(this.baseUrl, rawToken);
-    const message = buildVerificationEmail(verificationLink, normalizedEmail, user.username);
+    const message = buildVerificationEmail({
+      verificationLink,
+      recipientEmail: normalizedEmail,
+      username: user.username,
+      expiresInHours: this.verificationExpiryHours,
+    });
     await this.emailService.send(message).catch((err) => logger.warn('Email send failed:', err));
 
     return { success: true, message: 'Verification email sent. Please check your inbox.' };

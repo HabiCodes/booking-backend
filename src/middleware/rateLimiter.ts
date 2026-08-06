@@ -70,6 +70,17 @@ export const authRateLimiter = rateLimiter({
   message: 'Too many authentication attempts, please try again later.',
 });
 
+/**
+ * Rate limiter for email resend.  Tighter than authRateLimiter because each
+ * request triggers an outbound email (costly and spammy).  Allowed: 5
+ * requests per rolling hour from the same IP / identity.
+ */
+export const resendVerificationLimiter = rateLimiter({
+  windowMs: 60 * 60_000,
+  max: 5,
+  message: 'Too many verification emails requested. Please try again later.',
+});
+
 export const apiRateLimiter = rateLimiter({
   windowMs: 60_000,
   max: 100,

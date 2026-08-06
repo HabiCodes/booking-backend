@@ -59,10 +59,11 @@ function buildTokenPayload(verificationToken) {
 // ── Service ──────────────────────────────────────────────────────────────────
 class AuthService {
     constructor(opts = {}) {
-        this.emailService = opts.emailService ?? new (require('./emailService').ConsoleEmailService)();
-        this.baseUrl = opts.baseUrl ?? (config_1.config.nodeEnv === 'production'
-            ? (process.env.APP_URL ?? '')
-            : 'http://localhost:3000');
+        this.emailService = opts.emailService ?? (0, emailService_1.createEmailService)({
+            apiKey: config_1.config.email.resendApiKey || undefined,
+            from: config_1.config.email.from,
+        });
+        this.baseUrl = opts.baseUrl ?? (config_1.config.email.appUrl || (config_1.config.nodeEnv === 'production' ? '' : 'http://localhost:3000'));
         this.bruteForce = opts.bruteForce ?? DEFAULT_BRUTE_FORCE;
         this.verificationExpiryHours = opts.verificationExpiryHours ?? 24;
     }
@@ -96,7 +97,12 @@ class AuthService {
         await authRepository_1.authRepository.createVerificationToken(userId, tokenHash, expiresAt);
         // Send email
         const verificationLink = generateVerificationLink(this.baseUrl, rawToken);
-        const message = (0, emailService_1.buildVerificationEmail)(verificationLink, normalizedEmail, username ?? null);
+        const message = (0, emailService_1.buildVerificationEmail)({
+            verificationLink,
+            recipientEmail: normalizedEmail,
+            username: username ?? null,
+            expiresInHours: this.verificationExpiryHours,
+        });
         await this.emailService.send(message).catch((err) => logger_1.logger.warn('Email send failed:', err));
         // Create tokens (user is not yet verified, but tokens are valid)
         const user = await userRepository_1.userRepository.findById(userId);
@@ -261,7 +267,12 @@ class AuthService {
         const expiresAt = new Date(Date.now() + this.verificationExpiryHours * 3600000).toISOString();
         await authRepository_1.authRepository.createVerificationToken(user.id, tokenHash, expiresAt);
         const verificationLink = generateVerificationLink(this.baseUrl, rawToken);
-        const message = (0, emailService_1.buildVerificationEmail)(verificationLink, normalizedEmail, user.username);
+        const message = (0, emailService_1.buildVerificationEmail)({
+            verificationLink,
+            recipientEmail: normalizedEmail,
+            username: user.username,
+            expiresInHours: this.verificationExpiryHours,
+        });
         await this.emailService.send(message).catch((err) => logger_1.logger.warn('Email send failed:', err));
         return { success: true, message: 'Verification email sent. Please check your inbox.' };
     }

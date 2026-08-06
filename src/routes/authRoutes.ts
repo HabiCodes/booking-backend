@@ -16,7 +16,7 @@ import {
   revokeMySession,
 } from '../controllers/authController';
 import { authMiddleware } from '../middleware/auth';
-import { authRateLimiter } from '../middleware/rateLimiter';
+import { authRateLimiter, resendVerificationLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 
@@ -27,8 +27,9 @@ router.post('/login', login);
 // ── Enhanced endpoints ──────────────────────────────────────────────────────
 router.post('/register-enhanced', authRateLimiter, registerEnhanced);
 router.post('/login-enhanced', authRateLimiter, loginEnhanced);
-router.post('/verify-email', verifyEmail);
-router.post('/resend-verification', authRateLimiter, resendVerification);
+// GET so the verification link in the email is a plain anchor href
+router.get('/verify-email', verifyEmail);
+router.post('/resend-verification', resendVerificationLimiter, resendVerification);
 router.post('/refresh-token', refreshToken);
 router.post('/logout', logout);
 router.post('/logout-all', authMiddleware, logoutAll);
