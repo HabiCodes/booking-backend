@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { AppError } from './errorHandler';
-import { generateAdminAccessToken } from '../utils/jwt';
 
 export interface AdminRequest extends Request {
   admin?: {

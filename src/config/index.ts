@@ -43,7 +43,7 @@ export const config = {
     adminExpiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '12h',
   },
 
-  corsOrigin: process.env.CORS_ORIGIN || '*',
+  corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3001',
   uploadDir: process.env.UPLOAD_DIR || './uploads',
   socketPort: asInt(process.env.SOCKET_PORT, 0),
 

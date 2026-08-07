@@ -2,19 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { AppError } from './errorHandler';
-import { verifyAccessToken, verifyRefreshToken } from '../utils/jwt';
+import { verifyAccessToken } from '../utils/jwt';
 
 export interface AuthRequest extends Request {
   user?: { id: number; email: string };
-}
-
-function extractToken(req: Request): string | null {
-  const header = req.headers.authorization;
-  if (header && header.startsWith('Bearer ')) {
-    return header.split(' ')[1] || null;
-  }
-  const queryToken = (req.query.token as string | undefined)?.trim();
-  return queryToken || null;
 }
 
 export function authMiddleware(
@@ -22,12 +13,13 @@ export function authMiddleware(
   _res: Response,
   next: NextFunction
 ): void {
-  const token = extractToken(req);
-  if (!token) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) {
     throw new AppError('Unauthorized', 401);
   }
 
   try {
+    const token = header.split(' ')[1];
     const decoded = verifyAccessToken(token);
     if (!decoded) {
       throw new AppError('Invalid or expired token', 401);
