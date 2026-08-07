@@ -416,7 +416,7 @@ export class HostingerEmailService implements EmailService {
       const response = await fetch(`${this.apiBaseUrl}/send`, {
         method: 'POST',
         headers: {
-          Authorization: this.apiToken,
+           Authorization: `Bearer ${this.apiToken}`,
           'Content-Type': 'application/json',
           'User-Agent': `${BRAND.name}-backend/1.0`,
         },
