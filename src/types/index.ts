@@ -43,7 +43,7 @@ export interface UserCreateInput {
 // Events
 // ---------------------------------------------------------------------------
 
-export type EventStatus = 'draft' | 'published' | 'hidden' | 'cancelled';
+export type EventStatus = 'draft' | 'pending_review' | 'approved' | 'published' | 'hidden' | 'archived' | 'cancelled';
 export type EventVisibility = 'public' | 'private' | 'unlisted';
 
 export interface EventRow {
@@ -80,6 +80,10 @@ export interface EventRow {
   cancel_window_hours: number;
   cancellable_until: string | null;
   published_at: string | null;
+  submitted_for_review_at: string | null;   // Migration 014
+  approved_at: string | null;               // Migration 014
+  approved_by: number | null;               // Migration 014
+  archived_at: string | null;               // Migration 014
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
@@ -254,6 +258,9 @@ export type AdminPermission =
   | 'uploads:read'
   | 'uploads:write'
   | 'uploads:delete'
+  | 'media:read'
+  | 'media:write'
+  | 'media:delete'
   | 'scanner:verify'
   | 'scanner:checkin'
   | 'admins:read'
@@ -509,3 +516,222 @@ export interface ApiResponse<T> {
     totalPages: number;
   };
 }
+
+// ---------------------------------------------------------------------------
+// Media (Migration 013)
+// ---------------------------------------------------------------------------
+
+export type MediaType = 'poster' | 'banner' | 'gallery' | 'thumbnail' | 'logo';
+
+export type MediaStatus = 'active' | 'archived';
+
+export interface MediaRow {
+  id: number;
+  uploaded_by: number | null;
+  storage_provider: 'local' | 's3' | 'cdn' | 'gcs';
+  storage_key: string;
+  file_name: string;
+  mime_type: string;
+  byte_size: number;
+  sha256_hash: string;
+  width: number | null;
+  height: number | null;
+  duration_seconds: number | null;
+  video_provider: 'local' | 'youtube' | 'vimeo' | 'mux' | 'cloudflare' | null;
+  thumbnail_media_id: number | null;
+  public_url: string;
+  blur_hash: string | null;
+  dominant_color: string | null;
+  alt_text: string | null;
+  is_public: boolean;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MediaPublic {
+  id: number;
+  storage_provider: string;
+  file_name: string;
+  mime_type: string;
+  byte_size: number;
+  width: number | null;
+  height: number | null;
+  duration_seconds: number | null;
+  video_provider: string | null;
+  public_url: string;
+  blur_hash: string | null;
+  dominant_color: string | null;
+  alt_text: string | null;
+  is_public: boolean;
+  created_at: string;
+}
+
+export interface MediaCreateInput {
+  storage_provider?: 'local' | 's3' | 'cdn' | 'gcs';
+  storage_key: string;
+  file_name: string;
+  mime_type: string;
+  byte_size: number;
+  sha256_hash: string;
+  width?: number | null;
+  height?: number | null;
+  duration_seconds?: number | null;
+  video_provider?: string | null;
+  public_url: string;
+  blur_hash?: string | null;
+  dominant_color?: string | null;
+  alt_text?: string | null;
+  is_public?: boolean;
+}
+
+export interface MediaUpdateInput {
+  file_name?: string;
+  mime_type?: string;
+  public_url?: string;
+  width?: number | null;
+  height?: number | null;
+  duration_seconds?: number | null;
+  blur_hash?: string | null;
+  dominant_color?: string | null;
+  alt_text?: string | null;
+  is_public?: boolean;
+  deleted_at?: string | null;
+}
+
+export interface EventMediaRow {
+  id: number;
+  event_id: number;
+  media_id: number;
+  media_type: MediaType;
+  display_order: number;
+  status: MediaStatus;
+  is_primary: boolean;
+  deleted_at: string | null;
+  created_at: string;
+}
+
+export interface EventMediaPublic {
+  id: number;
+  event_id: number;
+  media_id: number;
+  media: MediaPublic;
+  media_type: MediaType;
+  display_order: number;
+  status: MediaStatus;
+  is_primary: boolean;
+  created_at: string;
+}
+
+export interface EventMediaCreateInput {
+  media_id: number;
+  media_type: MediaType;
+  display_order?: number;
+  is_primary?: boolean;
+}
+
+export interface EventMediaUpdateInput {
+  media_type?: MediaType;
+  display_order?: number;
+  status?: MediaStatus;
+  is_primary?: boolean;
+}
+
+export interface MediaListQuery {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  mime_type?: string;
+  is_public?: boolean;
+  include_deleted?: boolean;
+  fromDate?: string;
+  toDate?: string;
+}
+
+export interface MediaListResult {
+  items: MediaPublic[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface EventMediaListQuery {
+  event_id: number;
+  media_type?: MediaType;
+  status?: MediaStatus;
+  include_deleted?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Event Lifecycle (Migration 014)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every valid event status value.  The state machine enforces which
+ * transitions are allowed (see eventLifecycleService.ts).
+ */
+export type EventLifecycleAction =
+  | 'submit_for_review'
+  | 'approve'
+  | 'reject'
+  | 'publish'
+  | 'unpublish'
+  | 'hide'
+  | 'show'
+  | 'archive'
+  | 'restore'
+  | 'cancel';
+
+/**
+ * One row in the event_status_history audit trail.
+ */
+export interface EventStatusHistoryRow {
+  id: number;
+  event_id: number;
+  actor_admin_id: number | null;    // null when triggered by a system action
+  from_status: EventStatus | null;  // null on creation
+  to_status: EventStatus;
+  reason: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+/**
+ * Safe subset of EventStatusHistoryRow returned to API consumers
+ * (omits the full metadata blob — callers needing details use the
+ * audit endpoint).
+ */
+export interface EventStatusHistoryPublic {
+  id: number;
+  event_id: number;
+  actor_admin_id: number | null;
+  actor_name: string | null;        // joined from admins
+  from_status: EventStatus | null;
+  to_status: EventStatus;
+  reason: string | null;
+  created_at: string;
+}
+
+/**
+ * Input for requesting a status transition.
+ */
+export interface EventStatusTransitionInput {
+  action: EventLifecycleAction;
+  reason?: string | null;
+}
+
+/**
+ * Snapshot of the workflow columns on events (Migration 014).
+ */
+export interface EventWorkflowInfo {
+  submitted_for_review_at: string | null;
+  approved_at: string | null;
+  approved_by: number | null;
+  archived_at: string | null;
+}
+
+/**
+ * Combined view — event + its workflow snapshot.
+ */
+export interface EventWithWorkflow extends EventRow, EventWorkflowInfo {}

@@ -333,7 +333,7 @@ class HostingerEmailService {
             const response = await fetch(`${this.apiBaseUrl}/send`, {
                 method: 'POST',
                 headers: {
-                    Authorization: this.apiToken,
+                    Authorization: `Bearer ${this.apiToken}`,
                     'Content-Type': 'application/json',
                     'User-Agent': `${exports.BRAND.name}-backend/1.0`,
                 },

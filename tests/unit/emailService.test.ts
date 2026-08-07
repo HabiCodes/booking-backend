@@ -278,10 +278,10 @@ describe('email > HostingerEmailService', () => {
     assert.strictEqual(body.from, 'no-reply@bigmembres.in');
   });
 
-  it('uses apiToken (no Bearer prefix) in Authorization header', async () => {
+  it('uses apiToken with Bearer prefix in Authorization header', async () => {
     const svc = new HostingerEmailService({ apiToken: 'h-token', from: 'from@x.com', mailboxId: 'mb-1' });
     await svc.send({ to: 'u@x.com', subject: 's', text: 't' });
-    assert.strictEqual(calls[0]!.opts.headers.Authorization, 'h-token');
+    assert.strictEqual(calls[0]!.opts.headers.Authorization, 'Bearer h-token');
   });
 
   it('retries on 503 then succeeds', async () => {

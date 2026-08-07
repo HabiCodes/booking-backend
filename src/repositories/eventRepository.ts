@@ -15,6 +15,8 @@ import type {
   EventListQuery,
   EventListResult,
   EventRow,
+  EventStatus,
+  EventStatusHistoryRow,
   EventUpdateInput,
 } from '../types';
 
@@ -26,6 +28,7 @@ const PUBLIC_EVENT_COLUMNS = `
   banner_url, thumbnail_url, logo_url, gallery,
   status, visibility, is_featured, is_active, organizer,
   cancel_window_hours, cancellable_until,
+  submitted_for_review_at, approved_at, approved_by, archived_at,
   created_at, updated_at, published_at, deleted_at
 `;
 
@@ -526,6 +529,181 @@ export class EventRepository {
   async getRemainingTickets(eventId: number): Promise<number> {
     const stats = await this.getBookingStats(eventId);
     return stats.remaining;
+  }
+
+  // ── Lifecycle workflow (Migration 014) ────────────────────────────────────
+
+  /**
+   * Update only the workflow columns (submitted_for_review_at, approved_at,
+   * approved_by, archived_at) on the event.  Used by the lifecycle service
+   * to persist the side-effects of a status transition.
+   *
+   * Returns the updated row, or null if the event is missing / soft-deleted.
+   */
+  async updateWorkflowInfo(
+    eventId: number,
+    workflow: {
+      submitted_for_review_at?: string | null;
+      approved_at?: string | null;
+      approved_by?: number | null;
+      archived_at?: string | null;
+    },
+    exec?: import('pg').PoolClient
+  ): Promise<EventRow | null> {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    const setField = (col: string, val: unknown) => {
+      if (val !== undefined) {
+        values.push(val);
+        fields.push(`${col} = $${idx}`);
+        idx++;
+      }
+    };
+    setField('submitted_for_review_at', workflow.submitted_for_review_at);
+    setField('approved_at', workflow.approved_at);
+    setField('approved_by', workflow.approved_by);
+    setField('archived_at', workflow.archived_at);
+
+    if (fields.length === 0) {
+      return this.getEventById(eventId);
+    }
+
+    values.push(eventId);
+    const client = exec ?? getPool();
+    const { rows } = await client.query(
+      `UPDATE events SET ${fields.join(', ')}, updated_at = NOW()
+       WHERE id = $${idx} AND deleted_at IS NULL
+       RETURNING ${PUBLIC_EVENT_COLUMNS}`,
+      values
+    );
+    return (rows as unknown as EventRow[])[0] || null;
+  }
+
+  /**
+   * Update only the status column.  Used by the lifecycle service for
+   * transitions whose side-effects are handled separately (workflow columns,
+   * history row).  Returns the new row.
+   */
+  async updateStatus(
+    eventId: number,
+    status: EventStatus,
+    exec?: import('pg').PoolClient
+  ): Promise<EventRow | null> {
+    const client = exec ?? getPool();
+    const { rows } = await client.query(
+      `UPDATE events SET status = $2, updated_at = NOW()
+       WHERE id = $1 AND deleted_at IS NULL
+       RETURNING ${PUBLIC_EVENT_COLUMNS}`,
+      [eventId, status]
+    );
+    return (rows as unknown as EventRow[])[0] || null;
+  }
+
+  /**
+   * Returns the event's lifecycle workflow fields (snapshot for the API).
+   */
+  async getWorkflowInfo(eventId: number): Promise<{
+    submitted_for_review_at: string | null;
+    approved_at: string | null;
+    approved_by: number | null;
+    archived_at: string | null;
+  } | null> {
+    const { rows } = await getPool().query(
+      `SELECT submitted_for_review_at, approved_at, approved_by, archived_at
+         FROM events
+        WHERE id = $1 AND deleted_at IS NULL`,
+      [eventId]
+    );
+    const row = (rows as Array<{
+      submitted_for_review_at: string | null;
+      approved_at: string | null;
+      approved_by: number | string | null;
+      archived_at: string | null;
+    }>)[0];
+    if (!row) return null;
+    return {
+      submitted_for_review_at: row.submitted_for_review_at,
+      approved_at: row.approved_at,
+      approved_by: row.approved_by !== null
+        ? (typeof row.approved_by === 'string' ? parseInt(row.approved_by, 10) : row.approved_by)
+        : null,
+      archived_at: row.archived_at,
+    };
+  }
+
+  /**
+   * List events in pending_review status — used by the admin review queue.
+   */
+  async listPendingReview(pageSize: number = 50, page: number = 1): Promise<EventListResult> {
+    const offset = (page - 1) * pageSize;
+    const itemsResult = await getPool().query(
+      `SELECT ${PUBLIC_EVENT_COLUMNS} FROM events
+        WHERE deleted_at IS NULL AND status = 'pending_review'
+        ORDER BY submitted_for_review_at ASC NULLS LAST, created_at ASC
+        LIMIT ${pageSize} OFFSET ${offset}`
+    );
+    const countResult = await getPool().query(
+      `SELECT COUNT(*) AS total FROM events WHERE deleted_at IS NULL AND status = 'pending_review'`
+    );
+    const total = parseInt(String((countResult.rows as Array<{ total: number | string }>)[0]?.total ?? 0), 10);
+    return {
+      items: itemsResult.rows as unknown as EventRow[],
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+    };
+  }
+
+  // ── Status history (Migration 014) ────────────────────────────────────────
+
+  /**
+   * Insert one row into event_status_history.  If `exec` (transaction client)
+   * is provided the insert participates in the same transaction.
+   */
+  async insertStatusHistory(
+    row: {
+      eventId: number;
+      actorAdminId?: number | null;
+      fromStatus: EventStatus | null;
+      toStatus: EventStatus;
+      reason?: string | null;
+      metadata?: Record<string, unknown>;
+    },
+    exec?: import('pg').PoolClient
+  ): Promise<EventStatusHistoryRow> {
+    const client = exec ?? getPool();
+    const { rows } = await client.query(
+      `INSERT INTO event_status_history
+         (event_id, actor_admin_id, from_status, to_status, reason, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, event_id, actor_admin_id, from_status, to_status, reason, metadata, created_at`,
+      [
+        row.eventId,
+        row.actorAdminId ?? null,
+        row.fromStatus,
+        row.toStatus,
+        row.reason ?? null,
+        JSON.stringify(row.metadata ?? {}),
+      ]
+    );
+    return rows[0] as unknown as EventStatusHistoryRow;
+  }
+
+  /**
+   * Fetch the full history for an event (most-recent first).
+   */
+  async getStatusHistory(eventId: number, limit: number = 50): Promise<EventStatusHistoryRow[]> {
+    const result = await getPool().query(
+      `SELECT id, event_id, actor_admin_id, from_status, to_status, reason, metadata, created_at
+         FROM event_status_history
+        WHERE event_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      [eventId, Math.min(limit, 200)]
+    );
+    return result.rows as unknown as EventStatusHistoryRow[];
   }
 }
 

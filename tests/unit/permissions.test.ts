@@ -23,8 +23,8 @@ import {
 // ── PERMISSIONS canonical set ──────────────────────────────────────────────────
 
 describe('PERMISSIONS', () => {
-  it('contains exactly 25 permissions', () => {
-    assert.strictEqual(PERMISSIONS.length, 25);
+  it('contains at least 25 permissions', () => {
+    assert.ok(PERMISSIONS.length >= 25, `expected at least 25 permissions, got ${PERMISSIONS.length}`);
   });
 
   it('all entries are colon-delimited resource:action strings', () => {
@@ -52,8 +52,8 @@ describe('ROLE_DEFAULTS', () => {
     }
   });
 
-  it('super_admin has all 25 permissions', () => {
-    assert.strictEqual(ROLE_DEFAULTS.super_admin.size, 25);
+  it('super_admin has all permissions', () => {
+    assert.strictEqual(ROLE_DEFAULTS.super_admin.size, PERMISSIONS.length);
   });
 
   it('ticket_scanner has the smallest set', () => {

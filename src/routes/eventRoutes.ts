@@ -16,6 +16,18 @@ import {
   adminCancelEvent,
   adminSetFeatured,
 } from '../controllers/eventController';
+import {
+  submitForReview,
+  approveEvent,
+  rejectEvent,
+  unpublishEvent,
+  showEvent,
+  archiveEvent,
+  restoreEvent,
+  cancelEvent,
+  getEventHistory,
+  listPendingReview,
+} from '../controllers/eventLifecycleController';
 import { adminAuthMiddleware, AdminRequest } from '../middleware/adminAuth';
 import { requirePermission } from '../middleware/permissions';
 import { auditMiddleware } from '../middleware/audit';
@@ -97,6 +109,66 @@ adminEventRouter.post(
   requirePermission('events:feature'),
   auditMiddleware('event.feature'),
   (req: AdminRequest, res, next) => adminSetFeatured(req, res, next)
+);
+
+// ── Lifecycle workflow routes (Migration 014) ──────────────────────────────────
+// Each transition is audited. The event_status_history insert is handled
+// by EventLifecycleService (appended atomically with the status change).
+adminEventRouter.post(
+  '/:id/submit-for-review',
+  requirePermission('events:write'),
+  auditMiddleware('event.submit_for_review'),
+  (req: AdminRequest, res, next) => submitForReview(req, res, next)
+);
+adminEventRouter.post(
+  '/:id/approve',
+  requirePermission('events:publish'),
+  auditMiddleware('event.approve'),
+  (req: AdminRequest, res, next) => approveEvent(req, res, next)
+);
+adminEventRouter.post(
+  '/:id/reject',
+  requirePermission('events:publish'),
+  auditMiddleware('event.reject'),
+  (req: AdminRequest, res, next) => rejectEvent(req, res, next)
+);
+adminEventRouter.post(
+  '/:id/unpublish',
+  requirePermission('events:publish'),
+  auditMiddleware('event.unpublish'),
+  (req: AdminRequest, res, next) => unpublishEvent(req, res, next)
+);
+adminEventRouter.post(
+  '/:id/show',
+  requirePermission('events:publish'),
+  auditMiddleware('event.show'),
+  (req: AdminRequest, res, next) => showEvent(req, res, next)
+);
+adminEventRouter.post(
+  '/:id/archive',
+  requirePermission('events:write'),
+  auditMiddleware('event.archive'),
+  (req: AdminRequest, res, next) => archiveEvent(req, res, next)
+);
+adminEventRouter.post(
+  '/:id/restore',
+  requirePermission('events:write'),
+  auditMiddleware('event.restore'),
+  (req: AdminRequest, res, next) => restoreEvent(req, res, next)
+);
+
+// ── Review queue ──────────────────────────────────────────────────────────────
+adminEventRouter.get(
+  '/pending-review',
+  requirePermission('events:read'),
+  (req: AdminRequest, res, next) => listPendingReview(req, res, next)
+);
+
+// ── Status history ─────────────────────────────────────────────────────────────
+adminEventRouter.get(
+  '/:id/history',
+  requirePermission('audit:read'),
+  (req: AdminRequest, res, next) => getEventHistory(req, res, next)
 );
 
 export default router;

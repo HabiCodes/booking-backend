@@ -15,6 +15,7 @@ import { auditMiddleware } from '../middleware/audit';
 import { adminEventRouter } from './eventRoutes';
 import bannerRoutes from './bannerRoutes';
 import uploadRoutes from './uploadRoutes';
+import { adminMediaRouter, eventMediaRouter } from './mediaRoutes';
 
 const router = Router();
 
@@ -78,5 +79,11 @@ router.use('/banners', bannerRoutes);
 
 // ── File uploads under /api/admin/uploads ───────────────────────────────────
 router.use('/uploads', uploadRoutes);
+
+// ── Media library under /api/admin/media ─────────────────────────────────────
+router.use('/media', adminMediaRouter);
+
+// ── Event-media binding under /api/admin/events/:eventId/media ───────────────
+router.use('/events/:eventId/media', eventMediaRouter);
 
 export default router;

@@ -11,6 +11,7 @@ const audit_1 = require("../middleware/audit");
 const eventRoutes_1 = require("./eventRoutes");
 const bannerRoutes_1 = __importDefault(require("./bannerRoutes"));
 const uploadRoutes_1 = __importDefault(require("./uploadRoutes"));
+const mediaRoutes_1 = require("./mediaRoutes");
 const router = (0, express_1.Router)();
 // All routes below require a valid admin JWT
 router.use(adminAuth_1.adminAuthMiddleware);
@@ -34,4 +35,8 @@ router.use('/events', eventRoutes_1.adminEventRouter);
 router.use('/banners', bannerRoutes_1.default);
 // ── File uploads under /api/admin/uploads ───────────────────────────────────
 router.use('/uploads', uploadRoutes_1.default);
+// ── Media library under /api/admin/media ─────────────────────────────────────
+router.use('/media', mediaRoutes_1.adminMediaRouter);
+// ── Event-media binding under /api/admin/events/:eventId/media ───────────────
+router.use('/events/:eventId/media', mediaRoutes_1.eventMediaRouter);
 exports.default = router;

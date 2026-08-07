@@ -243,10 +243,10 @@ const emailService_1 = require("../../src/services/emailService");
         strict_1.default.strictEqual(body.html, '<p>body</p>');
         strict_1.default.strictEqual(body.from, 'no-reply@bigmembres.in');
     });
-    (0, node_test_1.it)('uses apiToken (no Bearer prefix) in Authorization header', async () => {
+    (0, node_test_1.it)('uses apiToken with Bearer prefix in Authorization header', async () => {
         const svc = new emailService_1.HostingerEmailService({ apiToken: 'h-token', from: 'from@x.com', mailboxId: 'mb-1' });
         await svc.send({ to: 'u@x.com', subject: 's', text: 't' });
-        strict_1.default.strictEqual(calls[0].opts.headers.Authorization, 'h-token');
+        strict_1.default.strictEqual(calls[0].opts.headers.Authorization, 'Bearer h-token');
     });
     (0, node_test_1.it)('retries on 503 then succeeds', async () => {
         let attempt = 0;

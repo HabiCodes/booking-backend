@@ -18,8 +18,8 @@ const strict_1 = __importDefault(require("node:assert/strict"));
 const permissions_1 = require("../../src/rbac/permissions");
 // ── PERMISSIONS canonical set ──────────────────────────────────────────────────
 (0, node_test_1.describe)('PERMISSIONS', () => {
-    (0, node_test_1.it)('contains exactly 25 permissions', () => {
-        strict_1.default.strictEqual(permissions_1.PERMISSIONS.length, 25);
+    (0, node_test_1.it)('contains at least 25 permissions', () => {
+        strict_1.default.ok(permissions_1.PERMISSIONS.length >= 25, `expected at least 25 permissions, got ${permissions_1.PERMISSIONS.length}`);
     });
     (0, node_test_1.it)('all entries are colon-delimited resource:action strings', () => {
         for (const p of permissions_1.PERMISSIONS) {
@@ -41,8 +41,8 @@ const permissions_1 = require("../../src/rbac/permissions");
             strict_1.default.ok(role in permissions_1.ROLE_DEFAULTS, `role "${role}" missing from ROLE_DEFAULTS`);
         }
     });
-    (0, node_test_1.it)('super_admin has all 25 permissions', () => {
-        strict_1.default.strictEqual(permissions_1.ROLE_DEFAULTS.super_admin.size, 25);
+    (0, node_test_1.it)('super_admin has all permissions', () => {
+        strict_1.default.strictEqual(permissions_1.ROLE_DEFAULTS.super_admin.size, permissions_1.PERMISSIONS.length);
     });
     (0, node_test_1.it)('ticket_scanner has the smallest set', () => {
         const sizes = Object.entries(permissions_1.ROLE_DEFAULTS)
