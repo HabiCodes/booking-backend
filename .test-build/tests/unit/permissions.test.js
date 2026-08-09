@@ -21,11 +21,11 @@ const permissions_1 = require("../../src/rbac/permissions");
     (0, node_test_1.it)('contains at least 25 permissions', () => {
         strict_1.default.ok(permissions_1.PERMISSIONS.length >= 25, `expected at least 25 permissions, got ${permissions_1.PERMISSIONS.length}`);
     });
-    (0, node_test_1.it)('all entries are colon-delimited resource:action strings', () => {
+    (0, node_test_1.it)('all entries are colon-delimited strings (resource:action or scope:resource:action)', () => {
         for (const p of permissions_1.PERMISSIONS) {
             strict_1.default.ok(typeof p === 'string', `${p} is not a string`);
             strict_1.default.ok(p.includes(':'), `${p} is not colon-delimited`);
-            strict_1.default.strictEqual(p.split(':').length, 2, `${p} should have exactly one colon`);
+            strict_1.default.ok(p.split(':').length <= 3, `${p} should have at most 2 colons`);
         }
     });
     (0, node_test_1.it)('has no duplicates', () => {

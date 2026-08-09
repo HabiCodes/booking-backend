@@ -17,6 +17,9 @@ import bookingRoutes from './routes/bookingRoutes';
 import scanRoutes from './routes/scanRoutes';
 import adminRoutes from './routes/adminRoutes';
 import adminProtectedRoutes from './routes/adminProtectedRoutes';
+import organizerAuthRoutes from './routes/organizerAuthRoutes';
+import organizerEventRoutes from './routes/organizerEventRoutes';
+import organizerOrganizationRoutes from './routes/organizerOrganizationRoutes';
 import { logger } from './utils/logger';
 import { ensureUploadDirs } from './services/uploadService';
 import {
@@ -103,6 +106,9 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/scan', scanRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminProtectedRoutes);
+app.use('/api/organizer/auth', organizerAuthRoutes);
+app.use('/api/organizer/events', organizerEventRoutes);
+app.use('/api/organizer/organizations', organizerOrganizationRoutes);
 
 // ── API documentation ────────────────────────────────────────────────────────
 

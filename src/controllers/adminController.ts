@@ -110,35 +110,26 @@ export async function adminBookings(req: AdminRequest, res: Response, next: Next
     const offset = (page - 1) * pageSize;
     const status = req.query.status as string | undefined;
 
-    let countQuery = 'SELECT COUNT(*) FROM bookings b';
-    let dataQuery = `
-      SELECT b.id, b.ticket_count, b.status, b.created_at,
-             u.email as user_email, u.username as user_username,
-             e.title as event_title, e.event_date, e.venue as event_venue
-      FROM bookings b
-      INNER JOIN users u ON b.user_id = u.id
-      INNER JOIN events e ON b.event_id = e.id`;
+    const whereClause = status ? 'WHERE b.status = $1' : '';
+    const params: unknown[] = status ? [status] : [];
 
-    const params: unknown[] = [];
-    if (status) {
-      countQuery += ' WHERE b.status = $1';
-      dataQuery += ' WHERE b.status = $1';
-      params.push(status);
-    }
-
-    const { rows: countRows } = await getPool().query(`${countQuery} ${params.length > 0 ? 'WHERE ' + params.map((_, i) => `b.status = $${i + 1}`).join(' AND ') : ''}`, status ? [status] : []);
-    // count above is wrong; let me use a proper count query:
-    const totalRes = await getPool().query(
-      status
-        ? 'SELECT COUNT(*) as total FROM bookings WHERE status = $1'
-        : 'SELECT COUNT(*) as total FROM bookings',
-      status ? [status] : []
+    const { rows: countRows } = await getPool().query(
+      `SELECT COUNT(*) as total FROM bookings b ${whereClause}`,
+      params
     );
-    const total = Number((totalRes.rows as Array<{ total: number | string }>)[0]?.total ?? 0);
+    const total = Number((countRows as Array<{ total: number | string }>)[0]?.total ?? 0);
 
     const { rows } = await getPool().query(
-      `${dataQuery} ORDER BY b.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-      [...(status ? [status] : []), pageSize, offset]
+      `SELECT b.id, b.ticket_count, b.status, b.created_at,
+              u.email as user_email, u.username as user_username,
+              e.title as event_title, e.event_date, e.venue as event_venue
+       FROM bookings b
+       INNER JOIN users u ON b.user_id = u.id
+       INNER JOIN events e ON b.event_id = e.id
+       ${whereClause}
+       ORDER BY b.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, pageSize, offset]
     );
 
     res.json({

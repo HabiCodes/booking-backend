@@ -19,6 +19,7 @@ import type { AdminPermission } from '../types';
 // ── All known permission keys ────────────────────────────────────────────────
 
 export const PERMISSIONS: readonly AdminPermission[] = [
+  // ── Platform admin ──────────────────────────────────────────────────────────
   'users:read',
   'users:write',
   'users:delete',
@@ -47,6 +48,38 @@ export const PERMISSIONS: readonly AdminPermission[] = [
   'admins:delete',
   'audit:read',
   'analytics:read',
+
+  // ── Organizer / partner platform ────────────────────────────────────────────
+  'organizer:applications:read',
+  'organizer:applications:approve',
+  'organizer:applications:reject',
+  'organizer:applications:reopen',
+  'organizer:events:read',
+  'organizer:events:write',
+  'organizer:events:approve',
+  'organizer:bookings:read',
+  'organizer:bookings:cancel',
+  'organizer:bookings:write',
+  'organizer:tickets:read',
+  'organizer:tickets:scan',
+  'organizer:tickets:checkin',
+  'organizer:venues:read',
+  'organizer:venues:write',
+  'organizer:tiers:read',
+  'organizer:tiers:write',
+  'organizer:seats:read',
+  'organizer:seats:write',
+  'organizer:analytics:read',
+  'organizer:staff:read',
+  'organizer:staff:write',
+  'organizer:staff:delete',
+  'organizer:profile:read',
+  'organizer:profile:write',
+  'organizer:banking:read',
+  'organizer:banking:write',
+  'organizer:payments:read',
+  'organizer:payments:write',
+  'organizer:payments:refund',
 ];
 
 // ── Default permissions per role ─────────────────────────────────────────────
@@ -75,6 +108,12 @@ export const ROLE_DEFAULTS: Record<string, Set<AdminPermission>> = {
     'scanner:checkin',
     'analytics:read',
     'audit:read',
+    // Organizer management (subset)
+    'organizer:applications:read',
+    'organizer:events:read',
+    'organizer:bookings:read',
+    'organizer:analytics:read',
+    'organizer:payments:read',
   ]),
 
   event_manager: new Set([

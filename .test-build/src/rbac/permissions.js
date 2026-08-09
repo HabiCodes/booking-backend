@@ -21,6 +21,7 @@ exports.hasAllPermissions = hasAllPermissions;
 exports.hasAnyPermission = hasAnyPermission;
 // ── All known permission keys ────────────────────────────────────────────────
 exports.PERMISSIONS = [
+    // ── Platform admin ──────────────────────────────────────────────────────────
     'users:read',
     'users:write',
     'users:delete',
@@ -49,6 +50,37 @@ exports.PERMISSIONS = [
     'admins:delete',
     'audit:read',
     'analytics:read',
+    // ── Organizer / partner platform ────────────────────────────────────────────
+    'organizer:applications:read',
+    'organizer:applications:approve',
+    'organizer:applications:reject',
+    'organizer:applications:reopen',
+    'organizer:events:read',
+    'organizer:events:write',
+    'organizer:events:approve',
+    'organizer:bookings:read',
+    'organizer:bookings:cancel',
+    'organizer:bookings:write',
+    'organizer:tickets:read',
+    'organizer:tickets:scan',
+    'organizer:tickets:checkin',
+    'organizer:venues:read',
+    'organizer:venues:write',
+    'organizer:tiers:read',
+    'organizer:tiers:write',
+    'organizer:seats:read',
+    'organizer:seats:write',
+    'organizer:analytics:read',
+    'organizer:staff:read',
+    'organizer:staff:write',
+    'organizer:staff:delete',
+    'organizer:profile:read',
+    'organizer:profile:write',
+    'organizer:banking:read',
+    'organizer:banking:write',
+    'organizer:payments:read',
+    'organizer:payments:write',
+    'organizer:payments:refund',
 ];
 // ── Default permissions per role ─────────────────────────────────────────────
 exports.ROLE_DEFAULTS = {
@@ -74,6 +106,12 @@ exports.ROLE_DEFAULTS = {
         'scanner:checkin',
         'analytics:read',
         'audit:read',
+        // Organizer management (subset)
+        'organizer:applications:read',
+        'organizer:events:read',
+        'organizer:bookings:read',
+        'organizer:analytics:read',
+        'organizer:payments:read',
     ]),
     event_manager: new Set([
         'events:read',

@@ -27,11 +27,11 @@ describe('PERMISSIONS', () => {
     assert.ok(PERMISSIONS.length >= 25, `expected at least 25 permissions, got ${PERMISSIONS.length}`);
   });
 
-  it('all entries are colon-delimited resource:action strings', () => {
+  it('all entries are colon-delimited strings (resource:action or scope:resource:action)', () => {
     for (const p of PERMISSIONS) {
       assert.ok(typeof p === 'string', `${p} is not a string`);
       assert.ok(p.includes(':'), `${p} is not colon-delimited`);
-      assert.strictEqual(p.split(':').length, 2, `${p} should have exactly one colon`);
+      assert.ok(p.split(':').length <= 3, `${p} should have at most 2 colons`);
     }
   });
 

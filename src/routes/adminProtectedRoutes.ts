@@ -10,6 +10,7 @@ import {
   adminCancelBooking,
 } from '../controllers/adminController';
 import { adminAuthMiddleware, AdminRequest } from '../middleware/adminAuth';
+import { adminOrganizerController } from '../controllers/adminOrganizerController';
 import { requirePermission } from '../middleware/permissions';
 import { auditMiddleware } from '../middleware/audit';
 import { adminEventRouter } from './eventRoutes';
@@ -85,5 +86,70 @@ router.use('/media', adminMediaRouter);
 
 // ── Event-media binding under /api/admin/events/:eventId/media ───────────────
 router.use('/events/:eventId/media', eventMediaRouter);
+
+// ── Organizer Management (Super Admin) ──────────────────────────────────────
+router.get('/organizer-applications',
+  requirePermission('organizer:applications:read'),
+  adminOrganizerController.listOrganizerApplications
+);
+router.get('/organizer-applications/:id',
+  requirePermission('organizer:applications:read'),
+  adminOrganizerController.getOrganizerApplication
+);
+router.post('/organizer-applications/:id/review',
+  requirePermission('organizer:applications:approve'),
+  auditMiddleware('organizer.application.review'),
+  adminOrganizerController.reviewOrganizerApplication
+);
+
+// Organizations
+router.get('/organizations',
+  requirePermission('organizer:applications:read'),
+  adminOrganizerController.listOrganizations
+);
+router.get('/organizations/:id',
+  requirePermission('organizer:applications:read'),
+  adminOrganizerController.getOrganization
+);
+router.patch('/organizations/:id',
+  requirePermission('organizer:applications:approve'),
+  adminOrganizerController.updateOrganization
+);
+router.post('/organizations/:id/deactivate',
+  requirePermission('organizer:applications:approve'),
+  adminOrganizerController.deactivateOrganization
+);
+router.post('/organizations/:id/reactivate',
+  requirePermission('organizer:applications:approve'),
+  adminOrganizerController.reactivateOrganization
+);
+
+// Managers
+router.get('/managers',
+  requirePermission('organizer:staff:read'),
+  adminOrganizerController.listManagers
+);
+router.get('/managers/:id',
+  requirePermission('organizer:staff:read'),
+  adminOrganizerController.getManager
+);
+router.post('/managers',
+  requirePermission('organizer:staff:write'),
+  auditMiddleware('organizer.manager.create'),
+  adminOrganizerController.createManager
+);
+router.patch('/managers/:id',
+  requirePermission('organizer:staff:write'),
+  auditMiddleware('organizer.manager.update'),
+  adminOrganizerController.updateManager
+);
+router.post('/managers/:id/deactivate',
+  requirePermission('organizer:staff:write'),
+  adminOrganizerController.deactivateManager
+);
+router.post('/managers/:id/reactivate',
+  requirePermission('organizer:staff:write'),
+  adminOrganizerController.reactivateManager
+);
 
 export default router;

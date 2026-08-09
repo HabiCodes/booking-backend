@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const adminController_1 = require("../controllers/adminController");
 const adminAuth_1 = require("../middleware/adminAuth");
+const adminOrganizerController_1 = require("../controllers/adminOrganizerController");
 const permissions_1 = require("../middleware/permissions");
 const audit_1 = require("../middleware/audit");
 const eventRoutes_1 = require("./eventRoutes");
@@ -39,4 +40,21 @@ router.use('/uploads', uploadRoutes_1.default);
 router.use('/media', mediaRoutes_1.adminMediaRouter);
 // ── Event-media binding under /api/admin/events/:eventId/media ───────────────
 router.use('/events/:eventId/media', mediaRoutes_1.eventMediaRouter);
+// ── Organizer Management (Super Admin) ──────────────────────────────────────
+router.get('/organizer-applications', (0, permissions_1.requirePermission)('organizer:applications:read'), adminOrganizerController_1.adminOrganizerController.listOrganizerApplications);
+router.get('/organizer-applications/:id', (0, permissions_1.requirePermission)('organizer:applications:read'), adminOrganizerController_1.adminOrganizerController.getOrganizerApplication);
+router.post('/organizer-applications/:id/review', (0, permissions_1.requirePermission)('organizer:applications:approve'), (0, audit_1.auditMiddleware)('organizer.application.review'), adminOrganizerController_1.adminOrganizerController.reviewOrganizerApplication);
+// Organizations
+router.get('/organizations', (0, permissions_1.requirePermission)('organizer:applications:read'), adminOrganizerController_1.adminOrganizerController.listOrganizations);
+router.get('/organizations/:id', (0, permissions_1.requirePermission)('organizer:applications:read'), adminOrganizerController_1.adminOrganizerController.getOrganization);
+router.patch('/organizations/:id', (0, permissions_1.requirePermission)('organizer:applications:approve'), adminOrganizerController_1.adminOrganizerController.updateOrganization);
+router.post('/organizations/:id/deactivate', (0, permissions_1.requirePermission)('organizer:applications:approve'), adminOrganizerController_1.adminOrganizerController.deactivateOrganization);
+router.post('/organizations/:id/reactivate', (0, permissions_1.requirePermission)('organizer:applications:approve'), adminOrganizerController_1.adminOrganizerController.reactivateOrganization);
+// Managers
+router.get('/managers', (0, permissions_1.requirePermission)('organizer:staff:read'), adminOrganizerController_1.adminOrganizerController.listManagers);
+router.get('/managers/:id', (0, permissions_1.requirePermission)('organizer:staff:read'), adminOrganizerController_1.adminOrganizerController.getManager);
+router.post('/managers', (0, permissions_1.requirePermission)('organizer:staff:write'), (0, audit_1.auditMiddleware)('organizer.manager.create'), adminOrganizerController_1.adminOrganizerController.createManager);
+router.patch('/managers/:id', (0, permissions_1.requirePermission)('organizer:staff:write'), (0, audit_1.auditMiddleware)('organizer.manager.update'), adminOrganizerController_1.adminOrganizerController.updateManager);
+router.post('/managers/:id/deactivate', (0, permissions_1.requirePermission)('organizer:staff:write'), adminOrganizerController_1.adminOrganizerController.deactivateManager);
+router.post('/managers/:id/reactivate', (0, permissions_1.requirePermission)('organizer:staff:write'), adminOrganizerController_1.adminOrganizerController.reactivateManager);
 exports.default = router;

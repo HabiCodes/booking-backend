@@ -6,7 +6,7 @@
  *   country, latitude, longitude, start_at, end_at, event_date, start_time,
  *   end_time, capacity, remaining_capacity, price, currency, banner_url,
  *   thumbnail_url, logo_url, gallery JSONB, status, visibility, is_featured,
- *   is_active, organizer, created_at, updated_at, published_at, deleted_at
+ *   is_active, organizer, created_at, updated_at, published_at, deleted_at, organization_id, organizer_status
  */
 
 import { getPool, withTransaction } from '../db/pool';
@@ -14,6 +14,9 @@ import type {
   EventCreateInput,
   EventListQuery,
   EventListResult,
+  OrganizerEventHistoryRow,
+  EventOrganizerReviewInput,
+  EventOrganizerStatus,
   EventRow,
   EventStatus,
   EventStatusHistoryRow,
@@ -29,7 +32,7 @@ const PUBLIC_EVENT_COLUMNS = `
   status, visibility, is_featured, is_active, organizer,
   cancel_window_hours, cancellable_until,
   submitted_for_review_at, approved_at, approved_by, archived_at,
-  created_at, updated_at, published_at, deleted_at
+  created_at, updated_at, published_at, deleted_at, organization_id, organizer_status
 `;
 
 export class EventRepository {
@@ -255,6 +258,72 @@ export class EventRepository {
       params
     );
     return rows as unknown as EventRow[];
+  }
+
+
+  /**
+   * List events for a specific organization (organizer portal).
+   * Supports pagination and optional search.
+   */
+  async findByOrganization(
+    organizationId: number,
+    query: EventListQuery
+  ): Promise<EventListResult> {
+    const conditions: string[] = [
+      "organization_id = $1",
+      "deleted_at IS NULL",
+    ];
+    const params: unknown[] = [organizationId];
+    let paramIdx = 1;
+
+    if (query.search) {
+      paramIdx += 1;
+      params.push(`%${query.search}%`);
+      conditions.push(`(title ILIKE $${paramIdx} OR description ILIKE $${paramIdx})`);
+    }
+    if (query.status) {
+      paramIdx += 1;
+      params.push(query.status);
+      conditions.push(`status = $${paramIdx}`);
+    }
+    if (query.category) {
+      paramIdx += 1;
+      params.push(query.category);
+      conditions.push(`category = $${paramIdx}`);
+    }
+    if (query.city) {
+      paramIdx += 1;
+      params.push(query.city);
+      conditions.push(`city = $${paramIdx}`);
+    }
+
+    const pageSize = Math.min(query.pageSize ?? 20, 100);
+    const page = query.page ?? 1;
+    const offset = (page - 1) * pageSize;
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const itemsResult = await getPool().query(
+      `SELECT ${PUBLIC_EVENT_COLUMNS} FROM events
+       ${where}
+       ORDER BY created_at DESC
+       LIMIT $${paramIdx + 1} OFFSET $${paramIdx + 2}`,
+      [...params, pageSize, offset]
+    );
+
+    const countResult = await getPool().query(
+      `SELECT COUNT(*) AS total FROM events ${where}`,
+      params
+    );
+
+    const total = parseInt(String((countResult.rows as Array<{ total: number | string }>)[0]?.total ?? 0), 10);
+
+    return {
+      items: itemsResult.rows as unknown as EventRow[],
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize) || 1,
+    };
   }
 
   // ── Mutations ─────────────────────────────────────────────────────────────
@@ -704,6 +773,97 @@ export class EventRepository {
       [eventId, Math.min(limit, 200)]
     );
     return result.rows as unknown as EventStatusHistoryRow[];
+  }
+
+  // ── Organizer event status (Migration 019) ─────────────────────────────────
+
+  /**
+   * Update the organizer_status column and optional side-effect fields
+   * (submitted_at, rejection_reason, reviewed_by, reviewed_at).
+   */
+  async updateOrganizerStatus(
+    eventId: number,
+    organizerStatus: EventOrganizerStatus,
+    extras?: {
+      submitted_at?: string;
+      rejection_reason?: string;
+      reviewed_by?: number;
+      reviewed_at?: string;
+    }
+  ): Promise<EventRow | null> {
+    const sets: string[] = [`organizer_status = $1`, `updated_at = NOW()`];
+    const params: unknown[] = [organizerStatus];
+    let idx = 2;
+    if (extras?.submitted_at !== undefined) { sets.push(`submitted_at = $${idx++}`); params.push(extras.submitted_at); }
+    if (extras?.rejection_reason !== undefined) { sets.push(`rejection_reason = $${idx++}`); params.push(extras.rejection_reason); }
+    if (extras?.reviewed_by !== undefined) { sets.push(`reviewed_by = $${idx++}`); params.push(extras.reviewed_by); }
+    if (extras?.reviewed_at !== undefined) { sets.push(`reviewed_at = $${idx++}`); params.push(extras.reviewed_at); }
+    const { rows } = await getPool().query(
+      `UPDATE events SET ${sets.join(', ')} WHERE id = $${idx} AND deleted_at IS NULL RETURNING *`,
+      [...params, eventId]
+    );
+    return (rows as unknown as EventRow[])[0] || null;
+  }
+
+  /**
+   * List events in submitted organizer_status — the Super Admin review queue.
+   */
+  async findPendingReviewOrganizer(organizationId?: number): Promise<EventRow[]> {
+    const orgFilter = organizationId ? 'AND organization_id = $1' : '';
+    const params = organizationId ? [organizationId] : [];
+    const { rows } = await getPool().query(
+      `SELECT * FROM events
+        WHERE deleted_at IS NULL AND organizer_status = 'submitted'
+        ${orgFilter}
+        ORDER BY submitted_at ASC NULLS LAST, created_at ASC`,
+      params
+    );
+    return rows as unknown as EventRow[];
+  }
+
+  // ── Organizer event history (Migration 019) ────────────────────────────────
+
+  async addEventHistory(input: {
+    eventId: number;
+    organizationId: number;
+    actor_type?: string;
+    actor_user_id?: number | null;
+    actor_admin_id?: number | null;
+    from_status?: string | null;
+    to_status: string;
+    reason?: string | null;
+    metadata?: Record<string, unknown>;
+  }): Promise<OrganizerEventHistoryRow> {
+    const { rows } = await getPool().query(
+      `INSERT INTO organizer_event_history
+         (event_id, organization_id, actor_type, actor_user_id, actor_admin_id, from_status, to_status, reason, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [
+        input.eventId,
+        input.organizationId,
+        input.actor_type || 'system',
+        input.actor_user_id ?? null,
+        input.actor_admin_id ?? null,
+        input.from_status ?? null,
+        input.to_status,
+        input.reason ?? null,
+        JSON.stringify(input.metadata || {}),
+      ]
+    );
+    return rows[0] as unknown as OrganizerEventHistoryRow;
+  }
+
+  async findWithOrganizerHistory(eventId: number): Promise<{
+    event: EventRow;
+    history: OrganizerEventHistoryRow[];
+  } | null> {
+    const event = await this.getEventById(eventId);
+    if (!event) return null;
+    const { rows } = await getPool().query(
+      `SELECT * FROM organizer_event_history WHERE event_id = $1 ORDER BY created_at DESC`,
+      [eventId]
+    );
+    return { event, history: rows as unknown as OrganizerEventHistoryRow[] };
   }
 }
 

@@ -23,6 +23,9 @@ const bookingRoutes_1 = __importDefault(require("./routes/bookingRoutes"));
 const scanRoutes_1 = __importDefault(require("./routes/scanRoutes"));
 const adminRoutes_1 = __importDefault(require("./routes/adminRoutes"));
 const adminProtectedRoutes_1 = __importDefault(require("./routes/adminProtectedRoutes"));
+const organizerAuthRoutes_1 = __importDefault(require("./routes/organizerAuthRoutes"));
+const organizerEventRoutes_1 = __importDefault(require("./routes/organizerEventRoutes"));
+const organizerOrganizationRoutes_1 = __importDefault(require("./routes/organizerOrganizationRoutes"));
 const logger_1 = require("./utils/logger");
 const uploadService_1 = require("./services/uploadService");
 const healthController_1 = require("./controllers/healthController");
@@ -88,6 +91,9 @@ app.use('/api/bookings', bookingRoutes_1.default);
 app.use('/api/scan', scanRoutes_1.default);
 app.use('/api/admin', adminRoutes_1.default);
 app.use('/api/admin', adminProtectedRoutes_1.default);
+app.use('/api/organizer/auth', organizerAuthRoutes_1.default);
+app.use('/api/organizer/events', organizerEventRoutes_1.default);
+app.use('/api/organizer/organizations', organizerOrganizationRoutes_1.default);
 // ── API documentation ────────────────────────────────────────────────────────
 app.use('/docs', docsRoutes_1.default);
 // ── 404 ──────────────────────────────────────────────────────────────────────

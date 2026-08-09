@@ -69,6 +69,12 @@ export interface EventRow {
   logo_url: string | null;
   gallery: string[];               // JSONB array of URLs
   organizer: string | null;
+  organization_id: number | null;  // Migration 016
+  organizer_status: string | null; // Migration 016
+  submitted_at: string | null;         // Migration 019 - when organizer submitted for review
+  rejection_reason: string | null;     // Migration 019
+  reviewed_by: number | null;          // Migration 019
+  reviewed_at: string | null;          // Migration 019
   capacity: number;
   remaining_capacity: number | null;
   price: number | string;          // pg returns NUMERIC as string
@@ -240,6 +246,7 @@ export type AdminRole = 'super_admin' | 'admin' | 'event_manager' | 'ticket_scan
  * union and adding it to the role → permissions map in `src/rbac/permissions.ts`.
  */
 export type AdminPermission =
+  // Platform admin permissions
   | 'users:read'
   | 'users:write'
   | 'users:delete'
@@ -267,7 +274,38 @@ export type AdminPermission =
   | 'admins:write'
   | 'admins:delete'
   | 'audit:read'
-  | 'analytics:read';
+  | 'analytics:read'
+  // Organizer / partner platform permissions
+  | 'organizer:applications:read'
+  | 'organizer:applications:approve'
+  | 'organizer:applications:reject'
+  | 'organizer:applications:reopen'
+  | 'organizer:events:read'
+  | 'organizer:events:write'
+  | 'organizer:events:approve'
+  | 'organizer:bookings:read'
+  | 'organizer:bookings:cancel'
+  | 'organizer:bookings:write'
+  | 'organizer:tickets:read'
+  | 'organizer:tickets:scan'
+  | 'organizer:tickets:checkin'
+  | 'organizer:venues:read'
+  | 'organizer:venues:write'
+  | 'organizer:tiers:read'
+  | 'organizer:tiers:write'
+  | 'organizer:seats:read'
+  | 'organizer:seats:write'
+  | 'organizer:analytics:read'
+  | 'organizer:staff:read'
+  | 'organizer:staff:write'
+  | 'organizer:staff:delete'
+  | 'organizer:profile:read'
+  | 'organizer:profile:write'
+  | 'organizer:banking:read'
+  | 'organizer:banking:write'
+  | 'organizer:payments:read'
+  | 'organizer:payments:write'
+  | 'organizer:payments:refund';
 
 export interface AdminRow {
   id: number;
@@ -683,6 +721,14 @@ export type EventLifecycleAction =
   | 'restore'
   | 'cancel';
 
+// Organizer-side event status (parallel to the admin EventStatus workflow)
+export type EventOrganizerStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
+
+export interface EventOrganizerReviewInput {
+  action: 'approve' | 'reject';
+  reason?: string | null;
+}
+
 /**
  * One row in the event_status_history audit trail.
  */
@@ -735,3 +781,791 @@ export interface EventWorkflowInfo {
  * Combined view — event + its workflow snapshot.
  */
 export interface EventWithWorkflow extends EventRow, EventWorkflowInfo {}
+
+// ---------------------------------------------------------------------------
+// Organizer Applications (Migration 015)
+// ---------------------------------------------------------------------------
+
+export type OrganizerAppStatus = 'pending' | 'approved' | 'soft_rejected' | 'hard_rejected';
+
+export interface OrganizerApplicationRow {
+  id: number;
+  legal_name: string;
+  display_name: string;
+  email: string;
+  phone: string | null;
+  business_address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string;
+  gst_tax_id: string | null;
+  pan: string | null;
+  identity_document_url: string | null;
+  business_document_url: string | null;
+  supporting_document_urls: string[];
+  account_holder_name: string | null;
+  bank_details: Record<string, unknown>;
+  payout_details: Record<string, unknown>;
+  logo_url: string | null;
+  description: string | null;
+  branding_metadata: Record<string, unknown>;
+  status: OrganizerAppStatus;
+  rejection_type: 'soft' | 'hard' | null;
+  rejection_reason: string | null;
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+  hard_rejected_by: number | null;
+  hard_rejected_at: string | null;
+  organization_id: number | null;
+  submitted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizerApplicationCreateInput {
+  legal_name: string;
+  display_name: string;
+  email: string;
+  phone?: string | null;
+  business_address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  gst_tax_id?: string | null;
+  pan?: string | null;
+  identity_document_url?: string | null;
+  business_document_url?: string | null;
+  supporting_document_urls?: string[];
+  account_holder_name?: string | null;
+  bank_details?: Record<string, unknown>;
+  payout_details?: Record<string, unknown>;
+  logo_url?: string | null;
+  description?: string | null;
+  branding_metadata?: Record<string, unknown>;
+}
+
+export interface OrganizerApplicationReviewInput {
+  action: 'approve' | 'soft_reject' | 'hard_reject' | 'reopen';
+  reason?: string | null;
+}
+
+export interface OrganizerApplicationPublic {
+  id: number;
+  legal_name: string;
+  display_name: string;
+  email: string;
+  phone: string | null;
+  city: string | null;
+  state: string | null;
+  country: string;
+  status: OrganizerAppStatus;
+  rejection_type: 'soft' | 'hard' | null;
+  rejection_reason: string | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export interface OrganizerApplicationHistoryRow {
+  id: number;
+  application_id: number;
+  from_status: OrganizerAppStatus | null;
+  to_status: OrganizerAppStatus;
+  reason: string | null;
+  actor_admin_id: number | null;
+  actor_name: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface OrganizerEventHistoryRow {
+  id: number;
+  event_id: number;
+  organization_id: number;
+  actor_type: string;
+  actor_user_id: number | null;
+  actor_admin_id: number | null;
+  from_status: string | null;
+  to_status: string;
+  reason: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Organizations (Migration 016)
+// ---------------------------------------------------------------------------
+
+export interface OrganizationRow {
+  id: number;
+  name: string;
+  display_name: string;
+  slug: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string;
+  logo_url: string | null;
+  description: string | null;
+  branding_metadata: Record<string, unknown>;
+  bank_details: Record<string, unknown>;
+  payout_details: Record<string, unknown>;
+  is_active: boolean;
+  application_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationPublic {
+  id: number;
+  name: string;
+  display_name: string;
+  slug: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string;
+  logo_url: string | null;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationUpdateInput {
+  name?: string;
+  display_name?: string;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  logo_url?: string | null;
+  description?: string | null;
+  branding_metadata?: Record<string, unknown>;
+}
+
+export interface OrganizationBankUpdateInput {
+  account_holder_name?: string | null;
+  bank_details?: Record<string, unknown>;
+  payout_details?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Organizer Users (Migration 016)
+// ---------------------------------------------------------------------------
+
+export type OrganizerUserRole = 'owner' | 'manager';
+
+export interface OrganizerUserRow {
+  id: number;
+  organization_id: number;
+  email: string;
+  password_hash: string;
+  name: string;
+  phone: string | null;
+  role: OrganizerUserRole;
+  permissions: Record<string, boolean>;
+  is_active: boolean;
+  must_change_password: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizerUserPublic {
+  id: number;
+  organization_id: number;
+  email: string;
+  name: string;
+  phone: string | null;
+  role: OrganizerUserRole;
+  permissions: Record<string, boolean>;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizerUserCreateInput {
+  email: string;
+  name: string;
+  phone?: string | null;
+  password: string;
+  role: OrganizerUserRole;
+  permissions?: Record<string, boolean>;
+}
+
+export interface OrganizerUserUpdateInput {
+  name?: string;
+  phone?: string | null;
+  role?: OrganizerUserRole;
+  permissions?: Record<string, boolean>;
+  is_active?: boolean;
+}
+
+export interface OrganizerPasswordTokenRow {
+  id: number;
+  organizer_user_id: number;
+  token_hash: string;
+  expires_at: string;
+  used_at: string | null;
+  created_at: string;
+}
+
+export interface OrganizerLoginInput {
+  email: string;
+  password: string;
+}
+
+export interface OrganizerLoginResult {
+  user: OrganizerUserPublic;
+  token: string;
+  organization: OrganizationPublic;
+}
+
+// ---------------------------------------------------------------------------
+// Venues (Migration 017)
+// ---------------------------------------------------------------------------
+
+export interface VenueRow {
+  id: number;
+  organization_id: number | null;
+  name: string;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  capacity: number | null;
+  seating_map: Record<string, unknown>;
+  notes: string | null;
+  is_active: boolean;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VenuePublic {
+  id: number;
+  organization_id: number | null;
+  name: string;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  capacity: number | null;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VenueCreateInput {
+  name: string;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  capacity?: number | null;
+  seating_map?: Record<string, unknown>;
+  notes?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Ticket Tiers (Migration 017)
+// ---------------------------------------------------------------------------
+
+export type TicketTierType = 'general' | 'reserved';
+export type TicketTierStatus = 'active' | 'paused' | 'sold_out' | 'archived';
+
+export interface TicketTierRow {
+  id: number;
+  event_id: number;
+  name: string;
+  description: string | null;
+  type: TicketTierType;
+  price: string;
+  currency: string;
+  total_quantity: number;
+  sold_quantity: number;
+  sale_starts_at: string | null;
+  sale_ends_at: string | null;
+  status: TicketTierStatus;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TicketTierPublic {
+  id: number;
+  event_id: number;
+  name: string;
+  description: string | null;
+  type: TicketTierType;
+  price: number;
+  currency: string;
+  total_quantity: number;
+  sold_quantity: number;
+  remaining_quantity: number;
+  sale_starts_at: string | null;
+  sale_ends_at: string | null;
+  status: TicketTierStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TicketTierCreateInput {
+  name: string;
+  description?: string | null;
+  type?: TicketTierType;
+  price: number;
+  currency?: string;
+  total_quantity: number;
+  sale_starts_at?: string | null;
+  sale_ends_at?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TicketTierUpdateInput {
+  name?: string;
+  description?: string | null;
+  price?: number;
+  sale_starts_at?: string | null;
+  sale_ends_at?: string | null;
+  status?: TicketTierStatus;
+  metadata?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Seats (Migration 017)
+// ---------------------------------------------------------------------------
+
+export type SeatType = 'standard' | 'vip' | 'premium' | 'accessible' | 'wheelchair';
+
+export interface SeatRow {
+  id: number;
+  event_id: number;
+  tier_id: number | null;
+  section: string;
+  row_label: string;
+  seat_number: number;
+  label: string | null;
+  seat_type: SeatType;
+  is_available: boolean;
+  is_reserved: boolean;
+  is_held: boolean;
+  hold_expires_at: string | null;
+  hold_booking_id: number | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SeatPublic {
+  id: number;
+  event_id: number;
+  tier_id: number | null;
+  section: string;
+  row_label: string;
+  seat_number: number;
+  label: string | null;
+  seat_type: SeatType;
+  is_available: boolean;
+  is_reserved: boolean;
+  created_at: string;
+}
+
+export interface SeatBulkCreateInput {
+  section: string;
+  rows: Array<{
+    row_label: string;
+    seat_numbers: number[];
+    seat_type?: SeatType;
+  }>;
+}
+
+// ---------------------------------------------------------------------------
+// Check-ins (Migration 017)
+// ---------------------------------------------------------------------------
+
+export type CheckInStatus = 'VALID' | 'ALREADY_SCANNED' | 'INVALID' | 'EXPIRED' | 'CANCELLED' | 'WRONG_EVENT';
+
+export interface CheckInRow {
+  id: number;
+  ticket_id: number;
+  event_id: number;
+  scanned_by: number;
+  status: CheckInStatus;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface CheckInRecord {
+  id: number;
+  ticket_id: number;
+  ticket_uuid: string;
+  event_id: number;
+  event_title: string;
+  attendee_name: string;
+  scanned_by: number;
+  scanner_name: string;
+  status: CheckInStatus;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Analytics DTOs (VS3 backend)
+// ---------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+// Cashfree Payments (Migration 020)
+// --------------------------------------------------------------------------
+
+export type PaymentOrderStatus =
+  | 'CREATED'
+  | 'ACTIVE'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'EXPIRED'
+  | 'PARTIALLY_REFUNDED'
+  | 'REFUNDED';
+
+export type PaymentGateway = 'cashfree';
+
+export type VerificationSource = 'webhook' | 'api_poll';
+
+export interface PaymentOrderRow {
+  id: number;
+  order_id: string;
+  booking_id: number;
+  organization_id: number;
+  event_id: number;
+  amount: string;
+  currency: string;
+  cf_payment_id: string | null;
+  cf_order_token: string | null;
+  cf_payment_session_id: string | null;
+  cf_authorization_id: string | null;
+  status: PaymentOrderStatus;
+  payment_method: string | null;
+  payment_gateway: PaymentGateway;
+  error_code: string | null;
+  error_message: string | null;
+  verified_at: string | null;
+  verified_by: VerificationSource | null;
+  idempotency_key: string | null;
+  retry_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaymentOrderPublic {
+  id: number;
+  order_id: string;
+  booking_id: number;
+  organization_id: number;
+  event_id: number;
+  amount: number;
+  currency: string;
+  cf_payment_id: string | null;
+  status: PaymentOrderStatus;
+  payment_method: string | null;
+  payment_gateway: PaymentGateway;
+  error_code: string | null;
+  error_message: string | null;
+  verified_at: string | null;
+  verified_by: VerificationSource | null;
+  retry_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaymentOrderCreateInput {
+  booking_id: number;
+  order_id: string;
+  organization_id: number;
+  event_id: number;
+  amount: number;
+  currency?: string;
+  idempotency_key?: string;
+  payment_method?: string | null;
+}
+
+export type RefundStatus = 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+export type RefundType =
+  | 'customer_initiated'
+  | 'organizer_initiated'
+  | 'admin_initiated'
+  | 'fraud'
+  | 'payment_failure';
+
+export interface RefundRow {
+  id: number;
+  payment_order_id: number;
+  booking_id: number;
+  cf_refund_id: string | null;
+  cf_refund_status: string | null;
+  amount: string;
+  currency: string;
+  reason: string | null;
+  refund_type: RefundType;
+  status: RefundStatus;
+  created_by_admin_id: number | null;
+  created_by_user_id: number | null;
+  processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RefundPublic {
+  id: number;
+  payment_order_id: number;
+  booking_id: number;
+  cf_refund_id: string | null;
+  cf_refund_status: string | null;
+  amount: number;
+  currency: string;
+  reason: string | null;
+  refund_type: RefundType;
+  status: RefundStatus;
+  created_by_admin_id: number | null;
+  created_by_user_id: number | null;
+  processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RefundCreateInput {
+  payment_order_id: number;
+  booking_id: number;
+  amount: number;
+  reason?: string | null;
+  refund_type?: RefundType;
+}
+
+export interface WebhookEventRow {
+  id: number;
+  source: string;
+  event_type: string;
+  event_id: string;
+  idempotency_key: string;
+  raw_payload: Record<string, unknown>;
+  processed_at: string | null;
+  processing_error: string | null;
+  related_order_id: string | null;
+  created_at: string;
+}
+
+export interface WebhookEventPublic {
+  id: number;
+  source: string;
+  event_type: string;
+  event_id: string;
+  processed_at: string | null;
+  processing_error: string | null;
+  related_order_id: string | null;
+  created_at: string;
+}
+
+// --------------------------------------------------------------------------
+// Manager Invitations (Migration 021)
+// --------------------------------------------------------------------------
+
+export interface ManagerInvitationRow {
+  id: number;
+  organization_id: number;
+  invited_by_user_id: number;
+  email: string;
+  name: string | null;
+  token_hash: string;
+  permissions: Record<string, boolean>;
+  expires_at: string;
+  accepted_at: string | null;
+  accepted_user_id: number | null;
+  revoked_at: string | null;
+  revoked_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ManagerInvitationPublic {
+  id: number;
+  organization_id: number;
+  email: string;
+  name: string | null;
+  permissions: Record<string, boolean>;
+  expires_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ManagerInvitationCreateInput {
+  email: string;
+  name?: string | null;
+  permissions?: Record<string, boolean>;
+  expires_in_hours?: number;
+}
+
+export interface ManagerInvitationAcceptInput {
+  token: string;
+  name: string;
+  password: string;
+}
+
+export interface ManagerInvitationTokenPayload {
+  invitation_id: number;
+  organization_id: number;
+  email: string;
+  permissions: Record<string, boolean>;
+}
+
+// --------------------------------------------------------------------------
+// Analytics DTOs (VS2 enhanced)
+// --------------------------------------------------------------------------
+
+export interface OrganizerOverviewStats {
+  total_events: number;
+  draft_events: number;
+  pending_approval_events: number;
+  approved_events: number;
+  published_events: number;
+  total_bookings: number;
+  total_tickets_sold: number;
+  total_revenue: number;
+  upcoming_events: number;
+}
+
+export interface OrganizerSalesByEvent {
+  event_id: number;
+  event_title: string;
+  tickets_sold: number;
+  revenue: number;
+  booking_count: number;
+  capacity: number;
+  remaining_tickets: number;
+}
+
+export interface OrganizerSalesByTier {
+  tier_id: number;
+  tier_name: string;
+  tickets_sold: number;
+  revenue: number;
+}
+
+export interface OrganizerDailyStats {
+  date: string;
+  tickets_sold: number;
+  revenue: number;
+  booking_count: number;
+}
+
+export interface OrganizerCheckInStats {
+  total_scans: number;
+  valid_scans: number;
+  duplicate_scans: number;
+  invalid_scans: number;
+  expired_scans: number;
+  cancelled_scans: number;
+  by_manager: Array<{
+    user_id: number;
+    user_name: string;
+    scan_count: number;
+  }>;
+  by_event: Array<{
+    event_id: number;
+    event_title: string;
+    scan_count: number;
+  }>;
+}
+
+export interface OrganizerDashboardData {
+  overview: OrganizerOverviewStats;
+  sales_by_event: OrganizerSalesByEvent[];
+  sales_by_tier: OrganizerSalesByTier[];
+  daily_stats: OrganizerDailyStats[];
+  check_in_stats: OrganizerCheckInStats;
+}
+
+export interface OrganizerSalesByEvent {
+  event_id: number;
+  event_title: string;
+  tickets_sold: number;
+  revenue: number;
+  booking_count: number;
+  capacity: number;
+  remaining_tickets: number;
+}
+
+export interface OrganizerSalesByTier {
+  tier_id: number;
+  tier_name: string;
+  tickets_sold: number;
+  revenue: number;
+}
+
+export interface OrganizerDailyStats {
+  date: string;
+  tickets_sold: number;
+  revenue: number;
+  booking_count: number;
+}
+
+export interface OrganizerCheckInStats {
+  total_scans: number;
+  valid_scans: number;
+  duplicate_scans: number;
+  invalid_scans: number;
+  expired_scans: number;
+  cancelled_scans: number;
+  by_manager: Array<{
+    user_id: number;
+    user_name: string;
+    scan_count: number;
+  }>;
+  by_event: Array<{
+    event_id: number;
+    event_title: string;
+    scan_count: number;
+  }>;
+}
+
+export interface OrganizerDashboardData {
+  overview: OrganizerOverviewStats;
+  sales_by_event: OrganizerSalesByEvent[];
+  sales_by_tier: OrganizerSalesByTier[];
+  daily_stats: OrganizerDailyStats[];
+  check_in_stats: OrganizerCheckInStats;
+}
+
+// ---------------------------------------------------------------------------
+// Organizer Audit Logs (Migration 018)
+// ---------------------------------------------------------------------------
+
+export interface OrganizerAuditLogRow {
+  id: number;
+  organization_id: number;
+  actor_user_id: number | null;
+  actor_type: string;
+  action: string;
+  entity_type: string | null;
+  entity_id: number | null;
+  metadata: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}

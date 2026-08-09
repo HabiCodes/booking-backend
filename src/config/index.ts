@@ -41,6 +41,8 @@ export const config = {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     adminSecret: process.env.ADMIN_JWT_SECRET || 'change-me-admin-secret',
     adminExpiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '12h',
+    organizerSecret: process.env.ORGANIZER_JWT_SECRET || 'change-me-organizer-secret',
+    organizerExpiresIn: process.env.ORGANIZER_JWT_EXPIRES_IN || '8h',
   },
 
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3001',
@@ -137,6 +139,14 @@ export const config = {
   },
 
   // ── OTP registration ─────────────────────────────────────────────────────────
+  cashfree: {
+    appId: process.env.CASHFREE_APP_ID || '',
+    secretKey: process.env.CASHFREE_SECRET_KEY || '',
+    webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || '',
+    returnUrl: process.env.CASHFREE_RETURN_URL || 'http://localhost:3001',
+    notifyUrl: process.env.CASHFREE_NOTIFY_URL || 'http://localhost:4000/api/webhooks/cashfree',
+  },
+
   otp: {
     /** Length of the numeric OTP in digits (default 6). */
     codeLength: asInt(process.env.OTP_CODE_LENGTH, 6),
