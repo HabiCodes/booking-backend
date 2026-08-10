@@ -48,11 +48,14 @@ export class PaymentService {
       }
     }
 
-    // 2) Look up event for organization_id
-    const event = await eventRepository.getEventById(input.event_id);
-    if (!event) throw new AppError('Event not found', 404);
-    const organizationId = event.organization_id;
-    if (!organizationId) throw new AppError('Event has no organization', 400);
+    // 2) Resolve organization — either from event (Event domain) or directly (Turf domain)
+    let organizationId: number | null | undefined = input.organization_id;
+    if (input.event_id != null) {
+      const event = await eventRepository.getEventById(input.event_id);
+      if (!event) throw new AppError('Event not found', 404);
+      organizationId = event.organization_id ?? organizationId;
+    }
+    if (!organizationId) throw new AppError('Organization not found', 400);
 
     // 3) Create the gateway order
     const gatewayResult = await this.gateway.createOrder({
@@ -70,7 +73,7 @@ export class PaymentService {
     const order = await paymentOrderRepository.create({
       booking_id: input.booking_id,
       organization_id: organizationId,
-      event_id: input.event_id,
+      event_id: input.event_id ?? null,
       amount: input.amount,
       currency: input.currency || 'INR',
       order_id: input.orderId,

@@ -13,14 +13,15 @@ import type {
 export class PaymentOrderRepository {
   async create(input: PaymentOrderCreateInput): Promise<PaymentOrderRow> {
     const { rows } = await getPool().query(
-      `INSERT INTO payment_orders (order_id, booking_id, organization_id, event_id, amount, currency, idempotency_key, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'CREATED')
+      `INSERT INTO payment_orders (order_id, booking_id, organization_id, event_id, booking_type, amount, currency, idempotency_key, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'CREATED')
        RETURNING *`,
       [
         input.order_id,
         input.booking_id,
         input.organization_id,
-        input.event_id,
+        input.event_id ?? null,
+        input.event_id != null ? 'event' : 'turf',
         input.amount,
         input.currency || 'INR',
         input.idempotency_key || null,

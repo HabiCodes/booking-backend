@@ -1297,7 +1297,7 @@ export interface PaymentOrderCreateInput {
   booking_id: number;
   order_id: string;
   organization_id: number;
-  event_id: number;
+  event_id?: number | null;
   amount: number;
   currency?: string;
   idempotency_key?: string;
@@ -1568,4 +1568,497 @@ export interface OrganizerAuditLogRow {
   ip_address: string | null;
   user_agent: string | null;
   created_at: string;
+}
+
+// ===========================================================================
+// TURF DOMAIN (Migration 022)
+// ===========================================================================
+// Independent business domain — NOT an event, NOT a special event type.
+// Uses the same users / organizations / payments infrastructure.
+
+// ---------------------------------------------------------------------------
+// Resource types
+// ---------------------------------------------------------------------------
+
+export type TurfResourceType = 'slot_based' | 'seat_based' | 'zone_based';
+
+export interface TurfVenueRow {
+  id: number;
+  organization_id: number;
+  name: string;
+  description: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string;
+  latitude: number | null;
+  longitude: number | null;
+  amenities: string[];
+  status: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface TurfVenuePublic {
+  id: number;
+  organization_id: number;
+  name: string;
+  description: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string;
+  latitude: number | null;
+  longitude: number | null;
+  amenities: string[];
+  status: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfVenueCreateInput {
+  name: string;
+  description?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  amenities?: string[];
+}
+
+export interface TurfVenueUpdateInput {
+  name?: string;
+  description?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  amenities?: string[];
+  status?: string;
+  is_active?: boolean;
+}
+
+export interface TurfResourceRow {
+  id: number;
+  venue_id: number;
+  resource_type: TurfResourceType;
+  category: string;
+  name: string;
+  base_price: string;
+  attributes: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface TurfResourcePublic {
+  id: number;
+  venue_id: number;
+  resource_type: TurfResourceType;
+  category: string;
+  name: string;
+  base_price: number;
+  attributes: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfResourceCreateInput {
+  venue_id: number;
+  resource_type: TurfResourceType;
+  category: string;
+  name: string;
+  base_price: number;
+  attributes?: Record<string, unknown>;
+}
+
+export interface TurfResourceUpdateInput {
+  name?: string;
+  category?: string;
+  base_price?: number;
+  attributes?: Record<string, unknown>;
+  is_active?: boolean;
+}
+
+export interface TurfAvailabilityUnitRow {
+  id: number;
+  resource_id: number;
+  starts_at: string;
+  ends_at: string;
+  price: string | null;
+  seat_label: string | null;
+  total_capacity: number | null;
+  capacity_remaining: number;
+  status: string;
+  lock_holder_id: number | null;
+  lock_expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfAvailabilityUnitPublic {
+  id: number;
+  resource_id: number;
+  starts_at: string;
+  ends_at: string;
+  price: number | null;
+  seat_label: string | null;
+  total_capacity: number | null;
+  capacity_remaining: number;
+  status: string;
+  lock_expires_at: string | null;
+}
+
+export type TurfBookingStatus =
+  | 'pending_payment'
+  | 'confirmed'
+  | 'checked_in'
+  | 'completed'
+  | 'cancelled'
+  | 'refunded'
+  | 'expired';
+
+export interface TurfBookingRow {
+  id: number;
+  booking_reference: string;
+  user_id: number;
+  organization_id: number;
+  venue_id: number;
+  resource_id: number;
+  availability_unit_id: number;
+  booking_type: string;
+  offline_by_user_id: number | null;
+  quantity: number;
+  amount: string;
+  currency: string;
+  status: TurfBookingStatus;
+  payment_status: string;
+  payment_gateway_ref: string | null;
+  cancellation_reason: string | null;
+  cancelled_by: string | null;
+  cancellation_fee: string;
+  notes: string | null;
+  metadata: Record<string, unknown>;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface TurfBookingPublic {
+  id: number;
+  booking_reference: string;
+  user_id: number;
+  organization_id: number;
+  venue_id: number;
+  resource_id: number;
+  availability_unit_id: number;
+  booking_type: string;
+  quantity: number;
+  amount: number;
+  currency: string;
+  status: TurfBookingStatus;
+  payment_status: string;
+  payment_gateway_ref: string | null;
+  cancellation_reason: string | null;
+  cancelled_by: string | null;
+  cancellation_fee: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfBookingDetail extends TurfBookingPublic {
+  venue_name: string;
+  resource_name: string;
+  resource_type: string;
+  category: string;
+  slot_start: string;
+  slot_end: string;
+  qr_token: string | null;
+  qr_status: string | null;
+  customer_email: string;
+  customer_name: string | null;
+}
+
+export interface TurfBookingCreateInput {
+  availability_unit_id: number;
+  quantity?: number;
+  booking_type?: 'online' | 'offline';
+  coupon_code?: string | null;
+}
+
+export interface TurfBookingConfirmInput {
+  payment_order_id: string;
+}
+
+export interface TurfQRTicketRow {
+  id: number;
+  booking_id: number;
+  token: string;
+  status: string;
+  used_at: string | null;
+  used_by: number | null;
+  created_at: string;
+}
+
+export interface TurfQRTicketPublic {
+  id: number;
+  booking_id: number;
+  token: string;
+  status: string;
+  used_at: string | null;
+  created_at: string;
+}
+
+export interface TurfCouponRow {
+  id: number;
+  organization_id: number;
+  code: string;
+  description: string | null;
+  discount_type: string;
+  discount_value: string;
+  min_booking_amount: string;
+  max_discount: string | null;
+  usage_limit: number | null;
+  used_count: number;
+  per_user_limit: number;
+  valid_from: string;
+  valid_until: string;
+  applicable_resource_ids: number[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfCouponPublic {
+  id: number;
+  organization_id: number;
+  code: string;
+  description: string | null;
+  discount_type: string;
+  discount_value: number;
+  min_booking_amount: number;
+  max_discount: number | null;
+  usage_limit: number | null;
+  used_count: number;
+  per_user_limit: number;
+  valid_from: string;
+  valid_until: string;
+  applicable_resource_ids: number[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfCouponCreateInput {
+  code: string;
+  description?: string | null;
+  discount_type: 'percentage' | 'fixed';
+  discount_value: number;
+  min_booking_amount?: number;
+  max_discount?: number | null;
+  usage_limit?: number | null;
+  per_user_limit?: number;
+  valid_until: string;
+  applicable_resource_ids?: number[];
+}
+
+export interface TurfCouponUsageRow {
+  id: number;
+  coupon_id: number;
+  booking_id: number;
+  user_id: number;
+  discount_amount: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfSettlementRow {
+  id: number;
+  organization_id: number;
+  gross_amount: string;
+  commission_amount: string;
+  tax_amount: string;
+  net_amount: string;
+  status: string;
+  gateway_payout_id: string | null;
+  scheduled_at: string;
+  completed_at: string | null;
+  failure_reason: string | null;
+  retry_count: number;
+  max_retries: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfSettlementPublic {
+  id: number;
+  organization_id: number;
+  gross_amount: number;
+  commission_amount: number;
+  tax_amount: number;
+  net_amount: number;
+  status: string;
+  gateway_payout_id: string | null;
+  scheduled_at: string;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfSettlementItemRow {
+  id: number;
+  settlement_id: number;
+  booking_id: number;
+  gross_amount: string;
+  commission_amount: string;
+  tax_amount: string;
+  net_amount: string;
+  created_at: string;
+}
+
+export interface TurfRefundRow {
+  id: number;
+  settlement_item_id: number | null;
+  booking_id: number;
+  amount: string;
+  currency: string;
+  reason: string | null;
+  refund_type: string;
+  status: string;
+  gateway_refund_id: string | null;
+  processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfRefundPublic {
+  id: number;
+  booking_id: number;
+  amount: number;
+  currency: string;
+  reason: string | null;
+  refund_type: string;
+  status: string;
+  processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TurfWalletTransactionRow {
+  id: number;
+  user_id: number;
+  organization_id: number;
+  coins: number;
+  balance_after: number;
+  type: string;
+  category: string | null;
+  booking_id: number | null;
+  description: string | null;
+  actor_type: string | null;
+  actor_id: number | null;
+  created_at: string;
+}
+
+export interface TurfWalletTransactionPublic {
+  id: number;
+  user_id: number;
+  organization_id: number;
+  coins: number;
+  balance_after: number;
+  type: string;
+  category: string | null;
+  booking_id: number | null;
+  description: string | null;
+  created_at: string;
+}
+
+export interface TurfReviewRow {
+  id: number;
+  venue_id: number;
+  user_id: number;
+  booking_id: number;
+  rating: number;
+  review: string | null;
+  is_verified: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface TurfReviewPublic {
+  id: number;
+  venue_id: number;
+  user_id: number;
+  booking_id: number;
+  rating: number;
+  review: string | null;
+  is_verified: boolean;
+  created_at: string;
+}
+
+export interface TurfBookingAuditRow {
+  id: number;
+  booking_id: number;
+  ticket_id: number | null;
+  actor_type: string;
+  actor_id: number | null;
+  action: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface TurfSearchCacheRow {
+  id: number;
+  cache_key: string;
+  payload: Record<string, unknown>;
+  expires_at: string;
+  created_at: string;
+}
+
+// ── Customer-facing availability ──────────────────────────────────────────────
+
+export interface CustomerSlotAvailability {
+  unit_id: number;
+  starts_at: string;
+  ends_at: string;
+  status: 'available' | 'held' | 'booked' | 'blocked' | 'unavailable';
+  price: number | null;
+  currency: string;
+  formatted_time: string;
+  duration_minutes: number;
+  blocked_reason: string | null;
+}
+
+export interface ResourceAvailabilityResponse {
+  resource_id: number;
+  resource_name: string;
+  venue_id: number;
+  venue_name: string;
+  date: string;
+  timezone: string;
+  slots: CustomerSlotAvailability[];
+  summary: {
+    available: number;
+    held: number;
+    booked: number;
+    blocked: number;
+    unavailable: number;
+  };
+}
+
+export interface CustomerAvailabilityQuery {
+  resourceId: number;
+  date: string;
 }

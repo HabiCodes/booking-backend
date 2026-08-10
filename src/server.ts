@@ -28,6 +28,12 @@ import {
   shutdown as healthShutdown,
 } from './controllers/healthController';
 import docsRoutes from './routes/docsRoutes';
+import { turfCustomerRoutes } from './routes/turfRoutes';
+import { turfOrganizerRoutes } from './routes/turfOrganizerRoutes';
+import { turfAdminRoutes } from './routes/turfAdminRoutes';
+import { turfPaymentRoutes } from './routes/turfPaymentRoutes';
+import { turfWebhookRoutes } from './routes/turfWebhookRoutes';
+import { turfManagerRoutes } from './routes/turfManagerRoutes';
 import { assertValidEnvOrExit } from './utils/envValidation';
 import { authRepository } from './repositories/authRepository';
 
@@ -92,6 +98,12 @@ const apiV1 = express.Router();
 apiV1.use('/auth', authLimiter, authRoutes);
 apiV1.use('/events', eventRoutes);
 apiV1.use('/bookings', bookingRoutes);
+apiV1.use('/turf', turfCustomerRoutes);
+apiV1.use('/turf/payments', turfPaymentRoutes);
+apiV1.use('/turf/webhooks', turfWebhookRoutes);
+apiV1.use('/turf/manager', turfManagerRoutes);
+apiV1.use('/turf/organizer', turfOrganizerRoutes);
+apiV1.use('/turf/admin', turfAdminRoutes);
 apiV1.use('/scan', scanRoutes);
 apiV1.use('/admin', adminRoutes);
 apiV1.use('/admin', adminProtectedRoutes);
@@ -103,6 +115,12 @@ app.use('/api/v1', apiV1);
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/turf', turfCustomerRoutes);
+app.use('/api/turf/payments', turfPaymentRoutes);
+app.use('/api/turf/webhooks', turfWebhookRoutes);
+app.use('/api/turf/manager', turfManagerRoutes);
+app.use('/api/turf/organizer', turfOrganizerRoutes);
+app.use('/api/turf/admin', turfAdminRoutes);
 app.use('/api/scan', scanRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminProtectedRoutes);

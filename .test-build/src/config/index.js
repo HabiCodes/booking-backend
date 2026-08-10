@@ -109,7 +109,23 @@ exports.config = {
         bannerIdealWidth: 1600,
         bannerIdealHeight: 400,
     },
-    // ── Email / Hostinger ─────────────────────────────────────────────────────────
+    // ── Cashfree ──────────────────────────────────────────────────────────────────
+    cashfree: {
+        appId: process.env.CASHFREE_APP_ID || '',
+        secretKey: process.env.CASHFREE_SECRET_KEY || '',
+        webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || '',
+        returnUrl: process.env.CASHFREE_RETURN_URL || 'http://localhost:3001',
+        notifyUrl: process.env.CASHFREE_NOTIFY_URL || 'http://localhost:4000/api/webhooks/cashfree',
+    },
+    // ── Redis ─────────────────────────────────────────────────────────────────────
+    redis: {
+        url: process.env.REDIS_URL || 'redis://localhost:6379',
+        slotLockTtlSeconds: asInt(process.env.REDIS_SLOT_LOCK_TTL, 120),
+        idempotencyTtlSeconds: asInt(process.env.REDIS_IDEMPOTENCY_TTL, 86400),
+        idempotencyInProgressTtlSeconds: asInt(process.env.REDIS_IDEMPOTENCY_IN_PROGRESS_TTL, 120),
+        paymentExpirySeconds: asInt(process.env.PAYMENT_TIMEOUT_SECONDS, 300),
+    },
+    // ── Email (Hostinger) ────────────────────────────────────────────────────────
     email: {
         /**
          * Hostinger Mail API token. If absent, the app logs email content to the
@@ -133,13 +149,6 @@ exports.config = {
         timeoutMs: 10000,
     },
     // ── OTP registration ─────────────────────────────────────────────────────────
-    cashfree: {
-        appId: process.env.CASHFREE_APP_ID || '',
-        secretKey: process.env.CASHFREE_SECRET_KEY || '',
-        webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || '',
-        returnUrl: process.env.CASHFREE_RETURN_URL || 'http://localhost:3001',
-        notifyUrl: process.env.CASHFREE_NOTIFY_URL || 'http://localhost:4000/api/webhooks/cashfree',
-    },
     otp: {
         /** Length of the numeric OTP in digits (default 6). */
         codeLength: asInt(process.env.OTP_CODE_LENGTH, 6),
