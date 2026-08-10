@@ -95,6 +95,9 @@ CREATE TABLE IF NOT EXISTS ticket_tiers (
   status          VARCHAR(20) NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'paused', 'sold_out', 'archived')),
 
+  -- Soft delete
+  deleted_at      TIMESTAMPTZ  DEFAULT NULL,
+
   -- Metadata
   metadata        JSONB       DEFAULT '{}'::jsonb,
 
@@ -107,6 +110,18 @@ CREATE INDEX IF NOT EXISTS idx_ticket_tiers_event
 
 CREATE INDEX IF NOT EXISTS idx_ticket_tiers_event_status
   ON ticket_tiers (event_id, status);
+
+-- Idempotent guard: if the table was previously created without deleted_at
+-- (e.g., a partial deployment), add the column before creating the partial index.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'ticket_tiers' AND column_name = 'deleted_at'
+  ) THEN
+    ALTER TABLE ticket_tiers ADD COLUMN deleted_at TIMESTAMPTZ DEFAULT NULL;
+  END IF;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_tiers_event_name
   ON ticket_tiers (event_id, name)

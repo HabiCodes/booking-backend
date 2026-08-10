@@ -6,7 +6,7 @@ function asInt(value: string | undefined, fallback: number): number {
   const n = parseInt(value, 10);
   return Number.isNaN(n) ? fallback : n;
 }
-
+ 
 function asBool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   return /^(1|true|yes|on)$/i.test(value.trim());
