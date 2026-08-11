@@ -2062,3 +2062,187 @@ export interface CustomerAvailabilityQuery {
   resourceId: number;
   date: string;
 }
+
+// ── Financial Configuration ───────────────────────────────────────────────────
+
+export type FinancialConfigType = 'gst' | 'platform_fee' | 'commission' | 'tds' | 'cancellation_fee' | 'payout_minimum';
+export type FinancialConfigScope = 'global' | 'organization';
+
+export interface FinancialConfigRow {
+  id: number;
+  config_type: FinancialConfigType;
+  scope: FinancialConfigScope;
+  organization_id: number | null;
+  value_bps: number;
+  value_paise: number | null;
+  applies_to: string;
+  effective_date: string;
+  expires_at: string | null;
+  is_active: boolean;
+  created_by_admin_id: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FinancialConfigPublic {
+  id: number;
+  config_type: FinancialConfigType;
+  scope: FinancialConfigScope;
+  organization_id: number | null;
+  value_bps: number;
+  value_paise: number | null;
+  applies_to: string;
+  effective_date: string;
+  expires_at: string | null;
+  is_active: boolean;
+  created_by_admin_id: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FinancialConfigCreateInput {
+  config_type: FinancialConfigType;
+  scope?: FinancialConfigScope;
+  organization_id?: number | null;
+  value_bps: number;
+  value_paise?: number | null;
+  applies_to?: string;
+  effective_date?: string;
+  expires_at?: string | null;
+  notes?: string | null;
+}
+
+// ── Financial Ledger ──────────────────────────────────────────────────────────
+
+export type LedgerEntryType =
+  | 'payment_received' | 'refund_issued' | 'platform_fee' | 'gst_collected'
+  | 'gst_refunded' | 'commission_earned' | 'commission_reversed'
+  | 'settlement_paid' | 'cancellation_fee' | 'coupon_discount'
+  | 'ad_revenue' | 'sponsorship_revenue' | 'platform_fee_refunded' | 'adjustment';
+
+export type LedgerDirection = 'debit' | 'credit';
+export type LedgerReferenceType = 'booking' | 'refund' | 'settlement' | 'coupon'
+  | 'advertisement' | 'sponsorship' | 'payment_order' | 'adjustment' | 'cancellation';
+
+export interface FinancialLedgerEntryRow {
+  id: number;
+  organization_id: number | null;
+  entry_type: LedgerEntryType;
+  direction: LedgerDirection;
+  amount_paise: number;
+  currency: string;
+  reference_type: LedgerReferenceType;
+  reference_id: number;
+  idempotency_key: string;
+  config_snapshot: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  is_reversed: boolean;
+  reversed_by_id: number | null;
+  reversal_reason: string | null;
+  posted_at: string;
+  created_at: string;
+}
+
+export interface FinancialLedgerEntryPublic {
+  id: number;
+  organization_id: number | null;
+  entry_type: LedgerEntryType;
+  direction: LedgerDirection;
+  amount_paise: number;
+  currency: string;
+  reference_type: LedgerReferenceType;
+  reference_id: number;
+  idempotency_key: string;
+  config_snapshot: Record<string, unknown>;
+  is_reversed: boolean;
+  reversal_reason: string | null;
+  posted_at: string;
+  created_at: string;
+}
+
+// ── Financial Adjustments ─────────────────────────────────────────────────────
+
+export type AdjustmentType = 'settlement_correction' | 'fee_waiver' | 'penalty' | 'bonus' | 'other';
+
+export interface FinancialAdjustmentRow {
+  id: number;
+  admin_id: number;
+  organization_id: number | null;
+  adjustment_type: AdjustmentType;
+  amount_paise: number;
+  currency: string;
+  reference_type: string | null;
+  reference_id: number | null;
+  reason: string;
+  approved_by_admin_id: number | null;
+  approved_at: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+// ── Financial Calculation DTOs ────────────────────────────────────────────────
+
+export interface BookingFinancialBreakdown {
+  gross_amount_paise: number;
+  currency: string;
+  platform_fee_paise: number;
+  gst_on_platform_fee_paise: number;
+  commission_paise: number;
+  tds_paise: number;
+  cancellation_fee_paise: number;
+  coupon_discount_paise: number;
+  net_payable_to_business_paise: number;
+  total_customer_charged_paise: number;
+  config_snapshot: Record<string, unknown>;
+}
+
+export interface RefundFinancialBreakdown {
+  refund_amount_paise: number;
+  platform_fee_refund_paise: number;
+  gst_refund_paise: number;
+  commission_reversal_paise: number;
+  business_debit_paise: number;
+  config_snapshot: Record<string, unknown>;
+}
+
+export interface SettlementCalculation {
+  booking_id: number;
+  gross_amount_paise: number;
+  platform_fee_paise: number;
+  gst_paise: number;
+  commission_paise: number;
+  tds_paise: number;
+  net_settlement_paise: number;
+  config_snapshot: Record<string, unknown>;
+}
+
+// ── Report DTOs ───────────────────────────────────────────────────────────────
+
+export interface FinancialReportSummary {
+  organization_id: number | null;
+  report_date: string;
+  total_bookings: number;
+  total_gross_amount_paise: number;
+  total_gst_paise: number;
+  total_platform_fee_paise: number;
+  total_commission_paise: number;
+  total_tds_paise: number;
+  total_coupon_discount_paise: number;
+  total_cancellation_fee_paise: number;
+  total_refunded_paise: number;
+  total_net_payable_paise: number;
+  total_settled_paise: number;
+  total_pending_paise: number;
+  total_ad_revenue_paise: number;
+  total_sponsorship_revenue_paise: number;
+  total_adjustments_paise: number;
+}
+
+export interface LedgerBalance {
+  entry_type: LedgerEntryType;
+  total_debit_paise: number;
+  total_credit_paise: number;
+  net_paise: number;
+}
