@@ -167,7 +167,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_impression_delivery
 
 COMMENT ON TABLE promotion_impressions IS 'Every delivered promotion impression.';
 COMMENT ON COLUMN promotion_impressions.request_id IS 'Client-generated request ID for idempotency. NULL for organic loads.';
-COMMENT ON COLUMN promotion_impressions.is_unique IS 'True if this is the first impression from this session for this campaign.'
+COMMENT ON COLUMN promotion_impressions.is_unique IS 'True if this is the first impression from this session for this campaign.';
 -- ── Promotion Clicks ──────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS promotion_clicks (
