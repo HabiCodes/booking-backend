@@ -243,15 +243,19 @@ CREATE TABLE IF NOT EXISTS ad_inventory_slots (
   created_by_admin_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  deleted_at  TIMESTAMPTZ,
-  CONSTRAINT uq_inventory_slot UNIQUE (location_key, category, placement) WHERE deleted_at IS NULL
+  deleted_at  TIMESTAMPTZ
 );
+
+-- Partial unique index: one active slot per location/category/placement
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_slot
+  ON ad_inventory_slots (location_key, category, placement)
+  WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_ad_inventory_slots_lookup
   ON ad_inventory_slots(location_key, category, placement)
   WHERE deleted_at IS NULL AND is_active = true;
 
-COMMENT ON TABLE ad_inventory_sots IS 'Sponsored slot inventory limits per location/category/placement.';
+COMMENT ON TABLE ad_inventory_slots IS 'Sponsored slot inventory limits per location/category/placement.';
 
 
 -- ── Promotion Rank Weights ────────────────────────────────────────────────────

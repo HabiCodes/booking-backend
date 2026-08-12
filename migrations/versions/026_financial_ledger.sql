@@ -34,10 +34,13 @@ CREATE TABLE IF NOT EXISTS financial_ledger_entries (
   reversal_reason     TEXT         DEFAULT NULL,
   posted_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-  CONSTRAINT chk_ledger_no_self_reverse CHECK (id != reversed_by_id),
-  CONSTRAINT uq_ledger_active_event UNIQUE (entry_type, reference_type, reference_id)
-    WHERE is_reversed = false
+  CONSTRAINT chk_ledger_no_self_reverse CHECK (id != reversed_by_id)
 );
+
+-- Partial unique index: prevent duplicate non-reversed entries for the same reference
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ledger_active_event
+  ON financial_ledger_entries (entry_type, reference_type, reference_id)
+  WHERE is_reversed = false;
 
 CREATE INDEX IF NOT EXISTS idx_ledger_org_date
   ON financial_ledger_entries (organization_id, posted_at DESC)

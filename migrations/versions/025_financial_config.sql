@@ -22,10 +22,13 @@ CREATE TABLE IF NOT EXISTS financial_configs (
   created_by_admin_id INT          DEFAULT NULL REFERENCES admins(id),
   notes               TEXT         DEFAULT NULL,
   created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-  updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_financial_config_active UNIQUE (config_type, scope, organization_id)
-    WHERE is_active = true
+  updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+-- Partial unique index: enforce one active config per (type, scope, org)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_config_active
+  ON financial_configs (config_type, scope, organization_id)
+  WHERE is_active = true;
 
 CREATE INDEX IF NOT EXISTS idx_financial_configs_type
   ON financial_configs (config_type, is_active)
