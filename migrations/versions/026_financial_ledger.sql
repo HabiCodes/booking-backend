@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS financial_ledger_entries (
   reference_id        INT          NOT NULL,
   idempotency_key     VARCHAR(128) NOT NULL,
   config_snapshot     JSONB        DEFAULT '{}'::jsonb,
-  metadata            JSONB        DEFAULT '{}'::jsonb',
+  metadata            JSONB        DEFAULT '{}'::jsonb,
   is_reversed         BOOLEAN      NOT NULL DEFAULT false,
   reversed_by_id      INT          DEFAULT NULL
     REFERENCES financial_ledger_entries(id) ON DELETE SET NULL,
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS financial_adjustments (
   reason              TEXT         NOT NULL,
   approved_by_admin_id INT         DEFAULT NULL REFERENCES admins(id),
   approved_at         TIMESTAMPTZ  DEFAULT NULL,
-  metadata            JSONB        DEFAULT '{}'::jsonb',
+  metadata            JSONB        DEFAULT '{}'::jsonb,
   created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   CONSTRAINT chk_adjustment_positive CHECK (amount_paise > 0)
 );
