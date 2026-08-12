@@ -276,9 +276,19 @@ CREATE INDEX IF NOT EXISTS idx_check_ins_event
 CREATE INDEX IF NOT EXISTS idx_check_ins_scanner
   ON check_ins (scanned_by, created_at DESC);
 
+-- 42P17 fix: PostgreSQL does not allow non-IMMUTABLE functions (like NOW())
+-- in index predicates. Replace the partial index with a composite B-tree that
+-- covers the same query pattern without a volatile predicate. The planner uses
+-- the equality columns (event_id, status) for the index lookup and the
+-- descending timestamp for ORDER BY, then the query applies the 90-day filter.
+-- Drop any previously failed partial index first so this is idempotent on
+-- partially-migrated databases.
+DO $$
+BEGIN
+  DROP INDEX IF EXISTS idx_check_ins_status_event;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_check_ins_status_event
-  ON check_ins (event_id, status)
-  WHERE created_at > NOW() - INTERVAL '90 days';
+  ON check_ins (event_id, status, created_at DESC);
 
 
 -- ── ANALYZE ───────────────────────────────────────────────────────────────────
