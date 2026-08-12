@@ -55,6 +55,7 @@ export class OrganizerUserRepository {
     const fields: string[] = [];
     const params: unknown[] = [];
     let idx = 1;
+    if (input.email !== undefined) { fields.push(`email = $${idx++}`); params.push(input.email); }
     if (input.name !== undefined) { fields.push(`name = $${idx++}`); params.push(input.name); }
     if (input.phone !== undefined) { fields.push(`phone = $${idx++}`); params.push(input.phone); }
     if (input.role !== undefined) { fields.push(`role = $${idx++}`); params.push(input.role); }
@@ -80,6 +81,13 @@ export class OrganizerUserRepository {
 
   async delete(id: number): Promise<void> {
     await getPool().query('DELETE FROM organizer_users WHERE id = $1', [id]);
+  }
+
+  async anonymize(id: number): Promise<void> {
+    await getPool().query(
+      `UPDATE organizer_users SET name = $1, email = $2, phone = NULL, is_active = false, password_hash = 'deleted' WHERE id = $3`,
+      [`[deleted-${id}]`, `deleted-${id}@removed.local`, id]
+    );
   }
 }
 

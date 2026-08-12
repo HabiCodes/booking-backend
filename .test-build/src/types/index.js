@@ -9,3 +9,12 @@
  *  - Input interfaces → what the client sends to us (camelCase)
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.ORGANIZER_PROMOTION_PERMISSIONS = void 0;
+// ── Organizer Permission Sets ────────────────────────────────────────────────
+exports.ORGANIZER_PROMOTION_PERMISSIONS = [
+    'promotion_campaigns:read',
+    'promotion_campaigns:create',
+    'promotion_campaigns:update',
+    'promotion_campaigns:cancel',
+    'promotion_analytics:read',
+];

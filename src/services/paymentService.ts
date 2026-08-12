@@ -287,3 +287,20 @@ export class PaymentService {
 export function createPaymentService(config: { readonly appId: string; readonly secretKey: string; readonly webhookSecret: string; readonly returnUrl: string; readonly notifyUrl: string }): PaymentService {
   return new PaymentService(new CashfreePaymentGateway(config));
 }
+
+let _paymentService: PaymentService | null = null;
+export function getPaymentService(config?: { readonly appId: string; readonly secretKey: string; readonly webhookSecret: string; readonly returnUrl: string; readonly notifyUrl: string }): PaymentService {
+  if (!_paymentService && config) {
+    _paymentService = createPaymentService(config);
+  }
+  if (!_paymentService) {
+    _paymentService = createPaymentService({
+      appId: process.env.CASHFREE_APP_ID || '',
+      secretKey: process.env.CASHFREE_SECRET_KEY || '',
+      webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || '',
+      returnUrl: process.env.CASHFREE_RETURN_URL || '',
+      notifyUrl: process.env.CASHFREE_NOTIFY_URL || '',
+    });
+  }
+  return _paymentService;
+}

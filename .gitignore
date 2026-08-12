@@ -11,6 +11,8 @@ node_modules/
 # Build
 dist/
 build/
+.test-build/
+.next/
 
 # OS files
 .DS_Store

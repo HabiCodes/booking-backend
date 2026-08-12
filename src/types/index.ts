@@ -1002,6 +1002,7 @@ export interface OrganizerUserCreateInput {
 }
 
 export interface OrganizerUserUpdateInput {
+  email?: string;
   name?: string;
   phone?: string | null;
   role?: OrganizerUserRole;
@@ -2124,7 +2125,8 @@ export type LedgerEntryType =
 
 export type LedgerDirection = 'debit' | 'credit';
 export type LedgerReferenceType = 'booking' | 'refund' | 'settlement' | 'coupon'
-  | 'advertisement' | 'sponsorship' | 'payment_order' | 'adjustment' | 'cancellation';
+  | 'advertisement' | 'sponsorship' | 'payment_order' | 'adjustment' | 'cancellation'
+  | 'promotion_campaign';
 
 export interface FinancialLedgerEntryRow {
   id: number;
@@ -2246,3 +2248,477 @@ export interface LedgerBalance {
   total_credit_paise: number;
   net_paise: number;
 }
+
+// ============================================================================
+// Phase 5 — Promotion & Advertisement Engine Types
+// ===========================================================================
+
+// ── Placement ────────────────────────────────────────────────────────────────
+
+export type PromotionPlacement =
+  | 'HOME_HERO'
+  | 'CATEGORY_FEED'
+  | 'SEARCH_FEED'
+  | 'NEAR_YOU'
+  | 'LISTING_CARD'
+  | 'DETAIL_PAGE';
+
+// ── Entity Types ─────────────────────────────────────────────────────────────
+
+export type PromotionEntityType = 'turf_resource' | 'event' | 'venue' | 'organization';
+
+// ── Campaign Status ──────────────────────────────────────────────────────────
+
+export type PromotionCampaignStatus =
+  | 'DRAFT'
+  | 'PENDING_PAYMENT'
+  | 'ACTIVE'
+  | 'PAUSED'
+  | 'EXPIRED'
+  | 'CANCELLED'
+  | 'DEPLETED'
+  | 'REJECTED'
+  | 'REFUNDED';
+
+// ── Promotion Packages ────────────────────────────────────────────────────────
+
+export interface PromotionPackageRow {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  price_paise: number;
+  currency: string;
+  duration_days: number;
+  max_impressions: number;
+  priority_weight: number;
+  eligible_categories: string[];
+  eligible_entity_types: string[];
+  eligible_placements: string[];
+  metadata: Record<string, unknown>;
+  is_active: boolean;
+  is_featured: boolean;
+  sort_order: number;
+  created_by_admin_id: number | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface PromotionPackagePublic {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  price_paise: number;
+  currency: string;
+  duration_days: number;
+  max_impressions: number;
+  priority_weight: number;
+  eligible_categories: string[];
+  eligible_entity_types: string[];
+  eligible_placements: string[];
+  is_active: boolean;
+  is_featured: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface PromotionPackageCreateInput {
+  name: string;
+  description?: string | null;
+  price_paise: number;
+  duration_days: number;
+  max_impressions: number;
+  priority_weight?: number;
+  eligible_categories: string[];
+  eligible_entity_types?: string[];
+  eligible_placements: string[];
+  is_active?: boolean;
+  is_featured?: boolean;
+  sort_order?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PromotionPackageUpdateInput {
+  name?: string;
+  description?: string | null;
+  price_paise?: number;
+  duration_days?: number;
+  max_impressions?: number;
+  priority_weight?: number;
+  eligible_categories?: string[];
+  eligible_entity_types?: string[];
+  eligible_placements?: string[];
+  is_active?: boolean;
+  is_featured?: boolean;
+  sort_order?: number;
+  metadata?: Record<string, unknown>;
+}
+
+// ── Promotion Campaigns ───────────────────────────────────────────────────────
+
+export interface PromotionCampaignRow {
+  id: number;
+  organization_id: number;
+  package_id: number;
+  entity_type: PromotionEntityType;
+  entity_id: number;
+  entity_name: string;
+  entity_image_url: string | null;
+  entity_location: string | null;
+  status: PromotionCampaignStatus;
+  start_at: string;
+  end_at: string;
+  max_impressions: number;
+  impressions_delivered: number;
+  clicks: number;
+  priority_weight: number;
+  config_snapshot: Record<string, unknown>;
+  payment_order_id: string | null;
+  total_spend_paise: number;
+  created_by_organizer_id: number | null;
+  approved_by_admin_id: number | null;
+  approved_at: string | null;
+  rejection_reason: string | null;
+  cancelled_at: string | null;
+  paused_at: string | null;
+  paused_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface PromotionCampaignPublic {
+  id: number;
+  organization_id: number;
+  package_id: number;
+  package_name: string;
+  entity_type: PromotionEntityType;
+  entity_id: number;
+  entity_name: string;
+  entity_image_url: string | null;
+  entity_location: string | null;
+  status: PromotionCampaignStatus;
+  start_at: string;
+  end_at: string;
+  max_impressions: number;
+  impressions_delivered: number;
+  clicks: number;
+  priority_weight: number;
+  config_snapshot: Record<string, unknown>;
+  total_spend_paise: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromotionCampaignCreateInput {
+  organization_id: number;
+  package_id: number;
+  entity_type: PromotionEntityType;
+  entity_id: number;
+  entity_name: string;
+  entity_image_url?: string | null;
+  entity_location?: string | null;
+  start_at: string;
+  end_at: string;
+  max_impressions: number;
+  priority_weight?: number;
+  created_by_organizer_id?: number;
+}
+
+export interface PromotionCampaignUpdateInput {
+  status?: PromotionCampaignStatus;
+  start_at?: string;
+  end_at?: string;
+  priority_weight?: number;
+  paused_reason?: string | null;
+  rejection_reason?: string | null;
+  payment_order_id?: string | null;
+}
+
+// ── Promoted Entity (for listing injection) ──────────────────────────────────
+
+export interface PromotedEntity {
+  campaign_id: number;
+  entity_type: PromotionEntityType;
+  entity_id: number;
+  entity_name: string;
+  entity_image_url: string | null;
+  entity_location: string | null;
+  placement: PromotionPlacement;
+  position: number;
+  ranking_score: number;
+  priority_weight: number;
+  sponsored: true;
+}
+
+// ── Impressions ──────────────────────────────────────────────────────────────
+
+export interface PromotionImpressionRow {
+  id: number;
+  campaign_id: number;
+  placement: PromotionPlacement;
+  position: number;
+  ranking_score: number;
+  user_session_id: string | null;
+  request_id: string | null;
+  ip_hash: string | null;
+  user_agent: string | null;
+  device_type: string | null;
+  location_context: Record<string, unknown>;
+  is_unique: boolean;
+  delivered_at: string;
+}
+
+export interface PromotionImpressionInput {
+  campaign_id: number;
+  placement: PromotionPlacement;
+  position: number;
+  ranking_score: number;
+  user_session_id?: string | null;
+  request_id?: string | null;
+  ip_hash?: string | null;
+  user_agent?: string | null;
+  device_type?: string;
+  location_context?: Record<string, unknown>;
+}
+
+// ── Clicks ───────────────────────────────────────────────────────────────────
+
+export interface PromotionClickRow {
+  id: number;
+  campaign_id: number;
+  impression_id: number | null;
+  user_session_id: string | null;
+  ip_hash: string | null;
+  user_agent: string | null;
+  device_type: string | null;
+  clicked_at: string;
+}
+
+// ── Attributions ─────────────────────────────────────────────────────────────
+
+export interface PromotionAttributionCreateInput {
+  campaign_id: number;
+  booking_id: number;
+  attribution_type: 'click' | 'view';
+  attribution_window_hours: number;
+  interaction_at: string;
+  booking_amount_paise: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PromotionAttributionRow {
+  id: number;
+  campaign_id: number;
+  booking_id: number;
+  attribution_type: 'click' | 'view';
+  attribution_window_hours: number;
+  interaction_at: string;
+  attributed_at: string;
+  booking_amount_paise: number;
+  metadata: Record<string, unknown>;
+}
+
+// ── Inventory Slots ──────────────────────────────────────────────────────────
+
+export interface AdInventorySlotRow {
+  id: number;
+  location_key: string;
+  category: string;
+  placement: PromotionPlacement;
+  max_slots: number;
+  is_active: boolean;
+  created_by_admin_id: number | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface AdInventorySlotPublic {
+  id: number;
+  location_key: string;
+  category: string;
+  placement: PromotionPlacement;
+  max_slots: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AdInventorySlotCreateInput {
+  location_key: string;
+  category: string;
+  placement: PromotionPlacement;
+  max_slots: number;
+  is_active?: boolean;
+}
+
+export interface AdInventorySlotUpdateInput {
+  max_slots?: number;
+  is_active?: boolean;
+}
+
+// ── Rank Weights ─────────────────────────────────────────────────────────────
+
+export interface PromotionRankWeightsRow {
+  id: number;
+  w1_priority: number;
+  w2_relevance: number;
+  w3_deficit: number;
+  updated_by_admin_id: number | null;
+  updated_at: string;
+}
+
+// ── Daily Aggregates ─────────────────────────────────────────────────────────
+
+export interface PromotionCampaignDailyRow {
+  id: number;
+  campaign_id: number;
+  date: string;
+  impressions: number;
+  unique_impressions: number;
+  clicks: number;
+  unique_clicks: number;
+  attributed_bookings: number;
+  attributed_revenue_paise: number;
+  spend_paise: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Analytics ────────────────────────────────────────────────────────────────
+
+export interface PromotionCampaignAnalytics {
+  campaign_id: number;
+  campaign_name: string;
+  status: PromotionCampaignStatus;
+  start_at: string;
+  end_at: string;
+  impressions: number;
+  unique_impressions: number;
+  clicks: number;
+  unique_clicks: number;
+  ctr: number;
+  attributed_bookings: number;
+  attributed_revenue_paise: number;
+  conversion_rate: number;
+  spend_paise: number;
+  roi: number;
+  remaining_impressions: number;
+  delivery_rate: number;
+  max_impressions: number;
+  impressions_delivered: number;
+}
+
+export interface PromotionAnalyticsByPlacement {
+  placement: PromotionPlacement;
+  impressions: number;
+  unique_impressions: number;
+  clicks: number;
+  ctr: number;
+}
+
+export interface PromotionAnalyticsByCategory {
+  category: string;
+  impressions: number;
+  unique_impressions: number;
+  clicks: number;
+  attributed_bookings: number;
+}
+
+export interface PromotionAnalyticsByLocation {
+  location_key: string;
+  impressions: number;
+  unique_impressions: number;
+  clicks: number;
+  attributed_bookings: number;
+}
+
+export interface PromotionDailyPerformance {
+  date: string;
+  impressions: number;
+  unique_impressions: number;
+  clicks: number;
+  attributed_bookings: number;
+  attributed_revenue_paise: number;
+  spend_paise: number;
+}
+
+export interface PromotionPlatformAnalytics {
+  total_campaigns: number;
+  active_campaigns: number;
+  total_impressions: number;
+  total_clicks: number;
+  total_attributed_bookings: number;
+  total_attributed_revenue_paise: number;
+  total_spend_paise: number;
+  avg_ctr: number;
+  avg_conversion_rate: number;
+  avg_roi: number;
+  by_placement: PromotionAnalyticsByPlacement[];
+  by_category: PromotionAnalyticsByCategory[];
+  by_location: PromotionAnalyticsByLocation[];
+  daily: PromotionDailyPerformance[];
+}
+
+// ── Ranking ──────────────────────────────────────────────────────────────────
+
+export interface RankedCampaign {
+  campaign_id: number;
+  entity_type: PromotionEntityType;
+  entity_id: number;
+  entity_name: string;
+  entity_image_url: string | null;
+  entity_location: string | null;
+  placement: PromotionPlacement;
+  position: number;
+  ranking_score: number;
+  priority_weight: number;
+  impressions_delivered: number;
+  max_impressions: number;
+  relevance_score: number;
+  impression_deficit: number;
+  bid_weight: number;
+}
+
+export interface RankingContext {
+  placement: PromotionPlacement;
+  category?: string;
+  location_key?: string;
+  entity_type?: PromotionEntityType;
+  limit: number;
+}
+
+export interface RankWeights {
+  w1_priority: number;
+  w2_relevance: number;
+  w3_deficit: number;
+}
+
+// ── Permissions ──────────────────────────────────────────────────────────────
+
+export type PromotionPermission =
+  | 'promotion_packages:create'
+  | 'promotion_packages:read'
+  | 'promotion_packages:update'
+  | 'promotion_packages:delete'
+  | 'promotion_packages:activate'
+  | 'promotion_campaigns:read'
+  | 'promotion_campaigns:approve'
+  | 'promotion_campaigns:cancel'
+  | 'promotion_campaigns:refund'
+  | 'promotion_campaigns:adjust'
+  | 'promotion_analytics:read'
+  | 'ad_inventory:manage'
+  | 'ranking:configure';
+
+// ── Organizer Permission Sets ────────────────────────────────────────────────
+
+export const ORGANIZER_PROMOTION_PERMISSIONS: readonly string[] = [
+  'promotion_campaigns:read',
+  'promotion_campaigns:create',
+  'promotion_campaigns:update',
+  'promotion_campaigns:cancel',
+  'promotion_analytics:read',
+] as const;

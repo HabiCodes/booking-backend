@@ -402,6 +402,81 @@ export class FinancialLedgerService {
     };
   }
 
+  /**
+   * Post promotion revenue to the ledger.
+   * Idempotent — uses (entry_type, reference_type, reference_id) unique index.
+   *
+   * Creates a single credit entry:
+   *   debit:  payment_received
+   *   credit: ad_revenue (reference_type: 'promotion_campaign')
+   */
+  async postPromotionRevenue(params: {
+    organization_id: number;
+    amount_paise: number;
+    reference_type: LedgerReferenceType;
+    reference_id: number;
+    payment_order_id: number;
+    config_snapshot: Record<string, unknown>;
+    description: string;
+  }): Promise<void> {
+    const pool = getPool();
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const idempotencyKey = `promotion_revenue:${params.reference_type}:${params.reference_id}`;
+
+      // Credit: platform receives promotion revenue
+      await postEntry(client, {
+        organizationId: params.organization_id,
+        entryType: 'ad_revenue',
+        direction: 'credit',
+        amountPaise: params.amount_paise,
+        referenceType: params.reference_type,
+        referenceId: params.reference_id,
+        idempotencyKey,
+        configSnapshot: params.config_snapshot,
+        metadata: {
+          payment_order_id: params.payment_order_id,
+          description: params.description,
+        },
+      });
+
+      // Debit: payment received
+      await postEntry(client, {
+        organizationId: params.organization_id,
+        entryType: 'payment_received',
+        direction: 'debit',
+        amountPaise: params.amount_paise,
+        referenceType: 'payment_order',
+        referenceId: params.payment_order_id,
+        idempotencyKey: `${idempotencyKey}:payment_received`,
+        configSnapshot: params.config_snapshot,
+        metadata: {
+          promotion_reference_id: params.reference_id,
+          description: params.description,
+        },
+      });
+
+      await client.query('COMMIT');
+      logger.info('Promotion revenue posted to ledger', {
+        referenceId: params.reference_id,
+        amountPaise: params.amount_paise,
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      // If it's a unique violation, the entry already exists — that's fine (idempotent)
+      if ((err as any).code === '23505') {
+        logger.info('Promotion revenue already posted (idempotent)', { referenceId: params.reference_id });
+        return;
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async getBalanceSummary(organizationId: number, startDate?: string, endDate?: string): Promise<LedgerBalance[]> {
     const pool = getPool();
     const clauses = ['organization_id = $1', 'is_reversed = false'];

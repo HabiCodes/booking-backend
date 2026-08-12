@@ -14,6 +14,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PaymentService = void 0;
 exports.createPaymentService = createPaymentService;
+exports.getPaymentService = getPaymentService;
 const errorHandler_1 = require("../middleware/errorHandler");
 const logger_1 = require("../utils/logger");
 const pool_1 = require("../db/pool");
@@ -256,4 +257,20 @@ exports.PaymentService = PaymentService;
  */
 function createPaymentService(config) {
     return new PaymentService(new cashfreeService_1.CashfreePaymentGateway(config));
+}
+let _paymentService = null;
+function getPaymentService(config) {
+    if (!_paymentService && config) {
+        _paymentService = createPaymentService(config);
+    }
+    if (!_paymentService) {
+        _paymentService = createPaymentService({
+            appId: process.env.CASHFREE_APP_ID || '',
+            secretKey: process.env.CASHFREE_SECRET_KEY || '',
+            webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || '',
+            returnUrl: process.env.CASHFREE_RETURN_URL || '',
+            notifyUrl: process.env.CASHFREE_NOTIFY_URL || '',
+        });
+    }
+    return _paymentService;
 }
