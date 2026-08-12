@@ -103,12 +103,12 @@ SELECT
   e.end_at,
   e.category,
   e.city,
-  e.venue_name
+  e.venue                     AS venue_name
 FROM events e
 LEFT JOIN bookings b ON b.event_id = e.id
 WHERE e.deleted_at IS NULL
 GROUP BY e.id, e.organization_id, e.title, e.created_at, e.start_at, e.end_at,
-         e.category, e.city, e.venue_name;
+         e.category, e.city, e.venue;
 
 -- ANALYZE
 ANALYZE manager_invitations;

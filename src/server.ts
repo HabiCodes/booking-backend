@@ -154,19 +154,36 @@ app.use(errorHandler);
 
 async function start() {
   try {
-    // Verify DB connection (optional — server still runs without DB)
+    // Verify DB connection and apply migrations.
+    // Connection failure is non-fatal (server can serve cached/public routes),
+    // but migration failure IS fatal — the schema is inconsistent.
+    let poolAvailable = false;
     try {
       const pool = getPool();
       const conn = await pool.connect();
       conn.release();
       logger.info('Database connection verified');
+      poolAvailable = true;
+    } catch (connErr) {
+      const message = connErr instanceof Error ? connErr.message : String(connErr);
+      logger.warn('Database connection failed (server will start without DB): ' + message);
+    }
 
-      await runMigrations();
-      logger.info('Database migrations completed');
+    if (poolAvailable) {
+      try {
+        await runMigrations();
+        logger.info('Database migrations completed');
+      } catch (migrationErr) {
+        logger.error('Database migrations FAILED — server cannot start safely:', migrationErr as Error);
+        logger.error('Fix the migration and redeploy. The process will now exit.');
+        process.exit(1);
+      }
+    }
 
-      // Background sweep: drop any pending registrations whose OTPs are
-      // already past their TTL or that were never collected.  We log the
-      // count when meaningful so ops can spot a spike in forgotten sign-ups.
+    // Background sweep: drop any pending registrations whose OTPs are
+    // already past their TTL or that were never collected.  We log the
+    // count when meaningful so ops can spot a spike in forgotten sign-ups.
+    if (poolAvailable) {
       try {
         const dropped = await authRepository.cleanupExpiredPendingRegistrations();
         if (dropped > 0) {
@@ -178,9 +195,6 @@ async function start() {
           cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
         );
       }
-    } catch (dbErr) {
-      const message = dbErr instanceof Error ? dbErr.message : String(dbErr);
-      logger.warn('Database connection failed (server will start without DB): ' + message);
     }
 
     // Init Socket.IO
