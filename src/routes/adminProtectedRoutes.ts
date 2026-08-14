@@ -9,6 +9,11 @@ import {
   adminUsers,
   adminCancelBooking,
 } from '../controllers/adminController';
+import {
+  adminListRefunds,
+  adminGetRefund,
+  adminCreateRefund,
+} from '../controllers/adminRefundController';
 import { adminAuthMiddleware, AdminRequest } from '../middleware/adminAuth';
 import { adminOrganizerController } from '../controllers/adminOrganizerController';
 import { requirePermission } from '../middleware/permissions';
@@ -150,6 +155,23 @@ router.post('/managers/:id/deactivate',
 router.post('/managers/:id/reactivate',
   requirePermission('organizer:staff:write'),
   adminOrganizerController.reactivateManager
+);
+
+// Refund management
+router.get('/refunds',
+  requirePermission('payment:read'),
+  auditMiddleware('admin.refund.list'),
+  adminListRefunds
+);
+router.get('/refunds/:id',
+  requirePermission('payment:read'),
+  auditMiddleware('admin.refund.view'),
+  adminGetRefund
+);
+router.post('/refunds',
+  requirePermission('payment:write'),
+  auditMiddleware('admin.refund.create'),
+  adminCreateRefund
 );
 
 export default router;

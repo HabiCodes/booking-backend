@@ -59,13 +59,14 @@ export class OrganizerAuthService {
   }
 
   async issueTokens(user: OrganizerUserRow): Promise<OrganizerAuthResult> {
-    const payload: OrganizerTokenPayload = {
+    const payload: Record<string, unknown> = {
       id: user.id,
-      organizationId: user.organization_id,
-      email: user.email,
+      sub: user.email,
+      organization_id: user.organization_id,
       name: user.name,
       role: user.role,
       permissions: (user.permissions as Record<string, boolean>) || {},
+      typ: 'organizer_access',
     };
 
     const accessToken = jwt.sign(payload, config.jwt.organizerSecret, {
@@ -73,7 +74,7 @@ export class OrganizerAuthService {
     });
 
     const refreshToken = jwt.sign(
-      { sub: user.id, type: 'organizer_refresh' },
+      { sub: user.id, typ: 'organizer_refresh' },
       config.jwt.organizerSecret,
       { expiresIn: '30d' as SignOptions['expiresIn'] }
     );
@@ -94,9 +95,9 @@ export class OrganizerAuthService {
     }
   }
 
-  verifyRefreshToken(token: string): { sub: number; type: string } | null {
+  verifyRefreshToken(token: string): { sub: number; typ: string } | null {
     try {
-      return jwt.verify(token, config.jwt.organizerSecret) as unknown as { sub: number; type: string };
+      return jwt.verify(token, config.jwt.organizerSecret) as unknown as { sub: number; typ: string };
     } catch {
       return null;
     }

@@ -1,22 +1,22 @@
-import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
-import { config } from '../config';
-import { AppError } from './errorHandler';
 
 /**
  * Organizer JWT auth middleware.
  *
- * Reads the same Authorization: Bearer header as adminAuthMiddleware but
- * verifies the token against the ORGANIZER secret (a separate key-space).
- * Attaches the decoded organizer user to `req.organizerUser`.
+ * Validates:
+ *   1. JWT signature against ORGANIZER_JWT_SECRET (separate key-space)
+ *   2. Token type and required claims (type validation)
+ *   3. Organizer user is_active status in database
  *
- * Usage:
- *   router.use(organizerAuthMiddleware);
- *   router.get('/dashboard', (req, res) => {
- *     const user = (req as OrganizerRequest).organizerUser!;
- *     ...
- *   });
+ * The is_active check ensures that deactivated organizer accounts cannot
+ * use existing JWTs until they expire (8-hour window reduced by this check).
  */
+
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { config } from '../config';
+import { AppError } from './errorHandler';
+import { getPool } from '../db/pool';
+import { verifyOrganizerAccessToken } from '../utils/jwt';
 
 export interface OrganizerRequest extends Request {
   organizerUser?: {
@@ -29,11 +29,25 @@ export interface OrganizerRequest extends Request {
   };
 }
 
-export function organizerAuthMiddleware(
+async function verifyOrganizerIsActive(userId: number): Promise<boolean> {
+  try {
+    const { rows } = await getPool().query(
+      'SELECT is_active FROM organizer_users WHERE id = $1 LIMIT 1',
+      [userId]
+    );
+    const row = (rows as Array<{ is_active: boolean }>)[0];
+    if (!row) return false;
+    return row.is_active;
+  } catch {
+    return true; // fail open
+  }
+}
+
+export async function organizerAuthMiddleware(
   req: OrganizerRequest,
   _res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
   const header = req.headers.authorization;
 
   if (!header || !header.startsWith('Bearer ')) {
@@ -43,16 +57,18 @@ export function organizerAuthMiddleware(
   const token = header.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, config.jwt.organizerSecret) as {
-      id: number;
-      organizationId: number;
-      email: string;
-      name: string;
-      role: 'owner' | 'manager';
-      permissions: Record<string, boolean>;
-    };
+    const payload = verifyOrganizerAccessToken(token);
+    if (!payload) {
+      throw new AppError('Invalid organizer token structure', 401);
+    }
 
-    req.organizerUser = decoded;
+    // Verify organizer user is still active
+    const isActive = await verifyOrganizerIsActive(payload.id);
+    if (!isActive) {
+      throw new AppError('Organizer account has been deactivated', 401);
+    }
+
+    req.organizerUser = payload;
     next();
   } catch {
     throw new AppError('Invalid or expired organizer token', 401);
@@ -65,20 +81,7 @@ export function organizerAuthMiddleware(
  */
 export function verifyOrganizerToken(token: string): OrganizerRequest['organizerUser'] | null {
   try {
-    const decoded = jwt.verify(token, config.jwt.organizerSecret) as {
-      id: number;
-      organizationId: number;
-      email: string;
-      name: string;
-      role: 'owner' | 'manager';
-      permissions: Record<string, boolean>;
-    };
-
-    if (typeof decoded.id !== 'number') return null;
-    if (typeof decoded.organizationId !== 'number') return null;
-    if (typeof decoded.email !== 'string') return null;
-
-    return decoded;
+    return verifyOrganizerAccessToken(token);
   } catch {
     return null;
   }

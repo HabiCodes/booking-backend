@@ -343,6 +343,7 @@ export interface RefreshTokenRow {
   id: number;
   user_id: number;
   token_hash: string;
+  session_id?: number | null;
   device_info: string | null;
   ip_address: string | null;
   expires_at: string;
@@ -1355,6 +1356,154 @@ export interface RefundCreateInput {
   amount: number;
   reason?: string | null;
   refund_type?: RefundType;
+}
+
+// ── Cancellation Requests + Refund Policies (Migration 029) ─────────────────
+
+export type CancellationRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'READY_FOR_MANUAL_PAYMENT' | 'PAID';
+
+export type RefundPolicyScope = 'global' | 'organization';
+
+export interface RefundPolicyRow {
+  id: number;
+  scope: RefundPolicyScope;
+  organization_id: number | null;
+  version: number;
+  hours_before: string;          // NUMERIC -> string from pg
+  refund_percentage: string;     // NUMERIC -> string from pg
+  is_active: boolean;
+  notes: string | null;
+  created_by_admin_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RefundPolicyPublic {
+  id: number;
+  scope: RefundPolicyScope;
+  organization_id: number | null;
+  version: number;
+  hours_before: number;
+  refund_percentage: number;
+  is_active: boolean;
+  notes: string | null;
+  created_by_admin_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RefundPolicyCreateInput {
+  scope?: RefundPolicyScope;
+  organization_id?: number | null;
+  version?: number;
+  hours_before: number;
+  refund_percentage: number;
+  is_active?: boolean;
+  notes?: string | null;
+  created_by_admin_id?: number | null;
+}
+
+export interface CancellationRequestRow {
+  id: number;
+  booking_id: number;
+  payment_order_id: number;
+  organization_id: number;
+  requested_by: number;
+  requested_at: string;
+  reason: string | null;
+  hours_before_event: string;
+  policy_id: number | null;
+  calculated_refund_percentage: string;
+  calculated_refund_amount_paise: string | number;
+  status: CancellationRequestStatus;
+  approved_by_admin_id: number | null;
+  approved_at: string | null;
+  approved_refund_percentage: string | null;
+  approved_refund_amount_paise: string | number | null;
+  override_reason: string | null;
+  rejection_reason: string | null;
+  refund_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CancellationRequestPublic {
+  id: number;
+  booking_id: number;
+  payment_order_id: number;
+  organization_id: number;
+  requested_by: number;
+  requested_at: string;
+  reason: string | null;
+  hours_before_event: number;
+  policy_id: number | null;
+  calculated_refund_percentage: number;
+  calculated_refund_amount_paise: number;
+  status: CancellationRequestStatus;
+  approved_by_admin_id: number | null;
+  approved_at: string | null;
+  approved_refund_percentage: number | null;
+  approved_refund_amount_paise: number | null;
+  override_reason: string | null;
+  rejection_reason: string | null;
+  refund_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CancellationRequestCreateInput {
+  booking_id: number;
+  payment_order_id: number;
+  organization_id: number;
+  requested_by: number;
+  reason?: string | null;
+  hours_before_event: number;
+  policy_id: number | null;
+  calculated_refund_percentage: number;
+  calculated_refund_amount_paise: number;
+}
+
+export interface CancellationApprovalInput {
+  admin_id: number;
+  approved_percentage?: number;   // if omitted, uses calculated
+  override_reason?: string | null;
+}
+
+export interface CancellationRejectionInput {
+  admin_id: number;
+  rejection_reason?: string | null;
+}
+
+// ── Manual Payments (Migration 030) ──────────────────────────────────────────
+
+export interface ManualPaymentRow {
+  id: number;
+  cancellation_request_id: number;
+  customer_upi_id: string;
+  amount_paise: number;
+  transaction_ref_id: string;
+  payment_date: string;
+  paid_at: string;
+  created_by_admin_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ManualPaymentCreateInput {
+  cancellation_request_id: number;
+  customer_upi_id: string;
+  amount_paise: number;
+  transaction_ref_id: string;
+  payment_date: string;
+  created_by_admin_id: number;
+}
+
+export interface MarkManualPaymentInput {
+  admin_id: number;
+  customer_upi_id: string;
+  amount_paise: number;
+  transaction_ref_id: string;
+  payment_date: string;
 }
 
 export interface WebhookEventRow {

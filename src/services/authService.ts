@@ -1,4 +1,68 @@
 /**
+ * Generate a stable, human-readable username from an email address.
+ * Produces the prefix part of the email (before @), lowercased, with
+ * non-alphanumeric characters replaced by underscores, truncated to 20 chars.
+ * Falls back to "user" if nothing usable remains.
+ *
+ * Examples:
+ *   "john@example.com"   → "john"
+ *   "john.doe@example"   → "john_doe"
+ *   "a+b@example.com"    → "a_b"
+ */
+function emailToUsername(email: string): string {
+  const prefix = email.split('@')[0] ?? '';
+  const normalized = prefix.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  return normalized.slice(0, 20) || 'user';
+}
+
+/**
+ * Generate a unique username.  If the caller supplied one, validate and
+ * normalise it.  If not (or if it would collide), derive one from the email
+ * and, if necessary, append a short random suffix until the database accepts it.
+ *
+ * The database UNIQUE index on username (WHERE username IS NOT NULL) is the
+ * final authority — we catch unique-violation errors and retry.
+ */
+async function resolveUniqueUsername(
+  desiredUsername: string | null | undefined,
+  repository: typeof userRepository,
+): Promise<string> {
+  const MAX_RETRIES = 5;
+
+  // Normalise a caller-supplied username
+  if (desiredUsername && desiredUsername.trim()) {
+    const normalized = desiredUsername.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 20);
+    if (!normalized) {
+      throw new Error('Username must contain at least one alphanumeric character');
+    }
+    const existing = await repository.findByUsername(normalized);
+    if (!existing) return normalized;
+    throw new Error(`Username "${normalized}" is already taken`);
+  }
+
+  // Derive from email — stable across retries so concurrent attempts
+  // are likely to generate the same candidate, letting the DB break the tie.
+  const base = emailToUsername((desiredUsername as string | undefined) ?? 'user');
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const candidate = attempt === 0 ? base : `${base}_${Math.random().toString(36).slice(2, 6)}`;
+
+    // Quick pre-check to avoid unnecessary DB round-trips on the first attempt
+    const existing = await repository.findByUsername(candidate);
+    if (!existing) return candidate;
+    // If taken, loop and try the next suffix
+  }
+
+  // Final fallback — use a longer random suffix
+  const fallback = `${base}_${Date.now().toString(36)}`;
+  const existing = await repository.findByUsername(fallback);
+  if (!existing) return fallback;
+
+  // As an absolute last resort, let the DB raise and the caller handles it
+  return fallback;
+}
+
+/**
  * Auth service — production-grade authentication.
  *
  * Design decisions:
@@ -17,13 +81,14 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
-import type { AppError } from '../middleware/errorHandler';
+import { AppError } from '../middleware/errorHandler';
 import { userRepository } from '../repositories/userRepository';
 import { authRepository } from '../repositories/authRepository';
 import { validatePassword, defaultPasswordPolicy } from '../utils/passwordPolicy';
 import { generateSecureToken, hashToken } from '../utils/safeToken';
 import { generateAccessToken, generateRefreshToken, verifyAccessToken, verifyRefreshToken } from '../utils/jwt';
 import { logger } from '../utils/logger';
+import { getRedis } from '../db/redis';
 import type {
   RefreshTokenRow,
   UserRow,
@@ -33,6 +98,18 @@ import type {
 } from '../types';
 import { buildVerificationEmail, buildOtpEmail, createEmailService, type EmailService } from './emailService';
 import { generateNumericOtp, hashOtp, verifyOtp } from '../utils/otp';
+
+const SESSION_REVOKED_PREFIX = 'auth:session:revoked:';
+const SESSION_REVOKED_TTL = 1800; // 30 minutes — exceeds 15min access token lifetime
+
+async function revokeSessionInRedis(sessionId: number): Promise<void> {
+  try {
+    const redis = getRedis();
+    await redis.set(`${SESSION_REVOKED_PREFIX}${sessionId}`, '1', 'EX', SESSION_REVOKED_TTL);
+  } catch {
+    // Redis unavailable — revocation still works via DB update
+  }
+}
 
 // ── Account lockout ──────────────────────────────────────────────────────────
 
@@ -176,13 +253,12 @@ export class AuthService {
     // Password policy
     const policyResult = validatePassword(password, defaultPasswordPolicy);
     if (!policyResult.valid) {
-      const err = new Error(policyResult.errors.join('; ')) as Error & { statusCode?: number };
-      err.statusCode = 400;
-      throw err;
+      throw new AppError(policyResult.errors.join('; '), 400);
     }
 
     const passwordHash = await userRepository.hashPassword(password);
-    const userId = await userRepository.createWithUsername(normalizedEmail, username ?? '', passwordHash);
+    const resolvedUsername = await resolveUniqueUsername(username, userRepository);
+    const userId = await userRepository.createWithUsername(normalizedEmail, resolvedUsername, passwordHash);
 
     // Generate verification token
     const rawToken = generateSecureToken();
@@ -195,7 +271,7 @@ export class AuthService {
     const message = buildVerificationEmail({
       verificationLink,
       recipientEmail: normalizedEmail,
-      username: username ?? null,
+      username: resolvedUsername,
       expiresInHours: this.verificationExpiryHours,
     });
     await this.emailService.send(message).catch((err) => logger.warn('Email send failed:', err));
@@ -214,9 +290,7 @@ export class AuthService {
     const normalizedEmail = email.toLowerCase().trim();
     const existing = await userRepository.findByEmail(normalizedEmail);
     if (existing) {
-      const err = new Error('Email already registered') as Error & { statusCode?: number };
-      err.statusCode = 409;
-      throw err;
+      throw new AppError('Email already registered', 409);
     }
 
     const userId = await userRepository.create(normalizedEmail, password);
@@ -246,25 +320,19 @@ export class AuthService {
     // exists, if a verified user already owns the email we MUST refuse.
     const existingUser = await userRepository.findByEmail(normalizedEmail);
     if (existingUser) {
-      const err = new Error(`Email "${normalizedEmail}" is already registered`) as Error & { statusCode?: number };
-      err.statusCode = 409;
-      throw err;
+      throw new AppError(`Email "${normalizedEmail}" is already registered`, 409);
     }
     if (trimmedUsername) {
       const existingUsername = await userRepository.findByUsername(trimmedUsername);
       if (existingUsername) {
-        const err = new Error(`Username "${trimmedUsername}" is already taken`) as Error & { statusCode?: number };
-        err.statusCode = 409;
-        throw err;
+        throw new AppError(`Username "${trimmedUsername}" is already taken`, 409);
       }
     }
 
     // Password policy
     const policyResult = validatePassword(password, defaultPasswordPolicy);
     if (!policyResult.valid) {
-      const err = new Error(policyResult.errors.join('; ')) as Error & { statusCode?: number };
-      err.statusCode = 400;
-      throw err;
+      throw new AppError(policyResult.errors.join('; '), 400);
     }
 
     // Hash the password (bcrypt) so we never store the plain-text.
@@ -292,7 +360,7 @@ export class AuthService {
     });
     await this.emailService.send(message).catch((err) => {
       logger.warn('[otp] failed to send registration OTP email:', err);
-      throw new Error('Failed to send OTP email') as Error & { statusCode?: number };
+      throw new AppError('Failed to send OTP email', 500);
     });
 
     return {
@@ -352,13 +420,21 @@ export class AuthService {
       };
     }
 
-    // OTP matched — atomically: create the user, mark verified, consume pending.
+    // Atomic consume: single UPDATE ... RETURNING prevents TOCTOU where two
+    // concurrent requests with the same OTP could both pass verification
+    // before either marks the pending row as consumed.
+    const consumed = await authRepository.verifyAndConsumeOtp(pending.id);
+    if (!consumed) {
+      return { success: false, message: 'This verification code has already been used.' };
+    }
+
+    // OTP matched — atomically: create the user, mark verified. OTP was
+    // already consumed by verifyAndConsumeOtp() above.
     const newUserId = await userRepository.createWithUsername(
       normalizedEmail,
-      pending.username ?? '',
+      await resolveUniqueUsername(pending.username ?? null, userRepository),
       pending.password_hash,
     );
-    await authRepository.markPendingConsumed(pending.id);
     // Audit log: explicitly mark verified (login does not require is_verified
     // checks for these users since they reached this flow).
     await authRepository.markUserVerified(newUserId);
@@ -378,7 +454,7 @@ export class AuthService {
       created_at: created.created_at,
     };
 
-    const tokens = this.issueTokens(created.id, created.email);
+    // Create session before issuing tokens so the session_id can be bound into the JWT
     const sessionId = await authRepository.createSession(
       created.id,
       deviceInfo ?? null,
@@ -386,6 +462,8 @@ export class AuthService {
       null,
       true
     );
+
+    const tokens = this.issueTokens(created.id, created.email, sessionId);
 
     return {
       success: true,
@@ -433,7 +511,7 @@ export class AuthService {
     });
     await this.emailService.send(message).catch((err) => {
       logger.warn('[otp] failed to resend registration OTP email:', err);
-      throw new Error('Failed to send OTP email') as Error & { statusCode?: number };
+      throw new AppError('Failed to send OTP email', 500);
     });
 
     return { sent: true, message: `A new verification code has been sent to ${normalizedEmail}.` };
@@ -448,8 +526,7 @@ export class AuthService {
     const recentFailedLogin = await authRepository.getRecentFailureWindow(normalizedEmail);
     const lockout = checkAccountLockout(recentFailedLogin, this.bruteForce.lockoutMinutes);
     if (lockout.locked && lockout.retryInMs !== null) {
-      const err = new Error(`Account temporarily locked. Try again in ${Math.ceil(lockout.retryInMs / 1000)} seconds`) as Error & { statusCode?: number; retryInMs?: number };
-      err.statusCode = 429;
+      const err = new AppError(`Account temporarily locked. Try again in ${Math.ceil(lockout.retryInMs / 1000)} seconds`, 429);
       err.retryInMs = lockout.retryInMs;
       throw err;
     }
@@ -458,27 +535,23 @@ export class AuthService {
     if (!user) {
       await authRepository.recordLoginAttempt(normalizedEmail, ipAddress ?? 'unknown', deviceInfo ?? null, false);
       await this.recordFailedLoginAndCheckLock(normalizedEmail, ipAddress, deviceInfo ?? null);
-      throw new Error('Invalid email or password') as Error & { statusCode?: number };
+      throw new AppError('Invalid email or password', 401);
     }
 
     if (!user.is_active) {
       await authRepository.recordLoginAttempt(normalizedEmail, ipAddress ?? 'unknown', deviceInfo ?? null, false);
-      const err = new Error('Your account has been disabled. Contact support.') as Error & { statusCode?: number };
-      err.statusCode = 403;
-      throw err;
+      throw new AppError('Your account has been disabled. Contact support.', 403);
     }
 
     const valid = await userRepository.verifyPassword(password, user.password_hash);
     if (!valid) {
       await authRepository.recordLoginAttempt(normalizedEmail, ipAddress ?? 'unknown', deviceInfo ?? null, false);
       await this.recordFailedLoginAndCheckLock(normalizedEmail, ipAddress, deviceInfo ?? null);
-      throw new Error('Invalid email or password') as Error & { statusCode?: number };
+      throw new AppError('Invalid email or password', 401);
     }
 
     if (!user.is_verified) {
-      const err = new Error('Please verify your email before logging in') as Error & { statusCode?: number };
-      err.statusCode = 403;
-      throw err;
+      throw new AppError('Please verify your email before logging in', 403);
     }
 
     // Successful login — record it
@@ -486,7 +559,6 @@ export class AuthService {
     await userRepository.updateLastLogin(user.id);
 
     // Issue tokens and create session
-    const tokens = this.issueTokens(user.id, user.email);
     const sessionId = await authRepository.createSession(
       user.id,
       deviceInfo ?? null,
@@ -494,6 +566,7 @@ export class AuthService {
       null, // userAgent — set by caller
       true
     );
+    const tokens = this.issueTokens(user.id, user.email, sessionId);
 
     const publicUser: UserPublic = {
       id: user.id,
@@ -519,9 +592,7 @@ export class AuthService {
   async recordFailedLoginAndCheckLock(email: string, ipAddress: string | null | undefined, _deviceInfo: string | null | undefined): Promise<void> {
     const recent = await authRepository.countFailedAttemptsSince(email, this.bruteForce.windowMinutes);
     if (recent >= this.bruteForce.maxAttempts) {
-      const err = new Error(`Too many failed login attempts. Please try again in ${this.bruteForce.lockoutMinutes} minutes.`) as Error & { statusCode?: number };
-      err.statusCode = 429;
-      throw err;
+      throw new AppError(`Too many failed login attempts. Please try again in ${this.bruteForce.lockoutMinutes} minutes.`, 429);
     }
     void ipAddress; // accepted but not stored by this counter; future-use
   }
@@ -530,33 +601,40 @@ export class AuthService {
 
   async refreshTokens(rawRefreshToken: string, deviceInfo?: string | null): Promise<AuthTokens> {
     const tokenHash = hashToken(rawRefreshToken);
-    const stored = await authRepository.findRefreshTokenByHash(tokenHash);
 
-    if (!stored || stored.revoked) {
-      throw new Error('Invalid or revoked refresh token') as Error & { statusCode?: number };
-    }
-
-    if (new Date(stored.expires_at) < new Date()) {
-      throw new Error('Refresh token expired. Please log in again.') as Error & { statusCode?: number };
-    }
-
-    // Verify the JWT payload
+    // Verify JWT payload first (cheap crypto check, no DB round-trip)
     const payload = verifyRefreshToken(rawRefreshToken);
     if (!payload) {
-      throw new Error('Invalid refresh token payload') as Error & { statusCode?: number };
+      throw new AppError('Invalid refresh token payload', 401);
     }
 
-    // Revoke old token (rotation)
-    await authRepository.revokeRefreshToken(tokenHash);
+    // Atomic find-and-consume: single UPDATE ... RETURNING query eliminates the
+    // TOCTOU gap where two concurrent requests could both pass validation before
+    // either revoked the token.
+    const consumed = await authRepository.findAndConsumeRefreshToken(tokenHash);
+
+    if (!consumed) {
+      // Either: token doesn't exist, was already revoked, or expired.
+      // Treat all cases as potential reuse for security.
+      const userId = payload.id;
+      await authRepository.revokeAllUserRefreshTokens(userId);
+      await authRepository.revokeAllUserSessions(userId);
+      const sessions = await authRepository.getUserSessions(userId);
+      await Promise.all(sessions.map(s => revokeSessionInRedis(s.id)));
+      throw new AppError('Refresh token reuse detected — all sessions have been revoked for security', 401);
+    }
 
     // Verify user still exists and is active
     const user = await userRepository.findById(payload.id);
     if (!user || !user.is_active) {
-      throw new Error('Account no longer active') as Error & { statusCode?: number };
+      throw new AppError('Account no longer active', 403);
     }
 
-    // Issue new pair
-    return this.issueTokens(payload.id, user.email);
+    // Carry the session_id through rotation so the new refresh token stays
+    // bound to the originating device session. This keeps the "active
+    // sessions" list accurate and ensures revocation by session_id works.
+    const sessionId = consumed.session_id ?? undefined;
+    return this.issueTokens(payload.id, user.email, sessionId);
   }
 
   // ── Logout ────────────────────────────────────────────────────────────────
@@ -569,6 +647,9 @@ export class AuthService {
   async logoutAllDevices(userId: number): Promise<{ revokedTokens: number; revokedSessions: number }> {
     const revokedTokens = await authRepository.revokeAllUserRefreshTokens(userId);
     const revokedSessions = await authRepository.revokeAllUserSessions(userId);
+    // Propagate session revocation to Redis for immediate enforcement
+    const sessions = await authRepository.getUserSessions(userId);
+    await Promise.all(sessions.map(s => revokeSessionInRedis(s.id)));
     return { revokedTokens, revokedSessions };
   }
 
@@ -580,6 +661,7 @@ export class AuthService {
 
   async revokeSession(sessionId: number): Promise<void> {
     await authRepository.revokeSession(sessionId);
+    await revokeSessionInRedis(sessionId);
   }
 
   // ── Verification ──────────────────────────────────────────────────────────
@@ -685,9 +767,7 @@ export class AuthService {
     // Password policy
     const policyResult = validatePassword(newPassword, defaultPasswordPolicy);
     if (!policyResult.valid) {
-      const err = new Error(policyResult.errors.join('; ')) as Error & { statusCode?: number };
-      err.statusCode = 400;
-      throw err;
+      throw new AppError(policyResult.errors.join('; '), 400);
     }
 
     // Hash new password and update
@@ -715,14 +795,12 @@ export class AuthService {
 
     const valid = await userRepository.verifyPassword(currentPassword, user.password_hash);
     if (!valid) {
-      throw new Error('Current password is incorrect') as Error & { statusCode?: number };
+      throw new AppError('Current password is incorrect', 400);
     }
 
     const policyResult = validatePassword(newPassword, defaultPasswordPolicy);
     if (!policyResult.valid) {
-      const err = new Error(policyResult.errors.join('; ')) as Error & { statusCode?: number };
-      err.statusCode = 400;
-      throw err;
+      throw new AppError(policyResult.errors.join('; '), 400);
     }
 
     const newHash = await userRepository.hashPassword(newPassword);
@@ -734,15 +812,15 @@ export class AuthService {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  private issueTokens(userId: number, email: string): AuthTokens {
-    const accessToken = generateAccessToken(userId, email);
+  private issueTokens(userId: number, email: string, sessionId?: number): AuthTokens {
+    const accessToken = generateAccessToken(userId, email, sessionId);
     const refreshToken = generateRefreshToken(userId, email);
     const expiresIn = config.jwt.expiresIn;
 
     // Persist refresh token hash (async — don't block token issuance)
     const tokenHash = hashToken(refreshToken);
     const tokenExpiry = new Date(Date.now() + 30 * 24 * 3600_000).toISOString();
-    authRepository.createRefreshToken(userId, tokenHash, null, null, tokenExpiry).catch((err) =>
+    authRepository.createRefreshToken(userId, tokenHash, sessionId ?? null, null, null, tokenExpiry).catch((err) =>
       logger.warn('Failed to persist refresh token:', err)
     );
 

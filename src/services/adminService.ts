@@ -14,6 +14,7 @@ interface AdminRecord {
   is_active: boolean;
   last_login_at: string | null;
   permissions: Record<string, boolean>;
+  permissions_updated_at: string | null;
 }
 
 function normalizePermissions(value: unknown): Record<string, boolean> {
@@ -37,6 +38,7 @@ function rowToRecord(r: AdminRecord): AdminRecord {
     is_active: Boolean(r.is_active),
     last_login_at: r.last_login_at,
     permissions: normalizePermissions(r.permissions),
+    permissions_updated_at: r.permissions_updated_at ?? null,
   };
 }
 
@@ -67,7 +69,7 @@ export class AdminService {
     }
 
     const effectivePermissions = computePermissions(admin.role, admin.permissions);
-    const token = generateAdminAccessToken(admin.id, admin.email, admin.role, effectivePermissions);
+    const token = generateAdminAccessToken(admin.id, admin.email, admin.role, effectivePermissions, admin.permissions_updated_at);
 
     // best-effort last_login update
     try {
@@ -154,7 +156,7 @@ export class AdminService {
 
   async updateRole(id: number, role: AdminRole): Promise<boolean> {
     const { rowCount } = await getPool().query(
-      'UPDATE admins SET role = $1 WHERE id = $2',
+      'UPDATE admins SET role = $1, permissions_updated_at = NOW() WHERE id = $2',
       [role, id]
     );
     return (rowCount ?? 0) > 0;
@@ -162,7 +164,7 @@ export class AdminService {
 
   async updatePermissions(id: number, permissions: Record<string, boolean>): Promise<boolean> {
     const { rowCount } = await getPool().query(
-      'UPDATE admins SET permissions = $1 WHERE id = $2',
+      'UPDATE admins SET permissions = $1, permissions_updated_at = NOW() WHERE id = $2',
       [JSON.stringify(permissions), id]
     );
     return (rowCount ?? 0) > 0;

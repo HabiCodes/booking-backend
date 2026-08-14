@@ -4,6 +4,7 @@ import { config } from '../config';
 export class AppError extends Error {
   statusCode: number;
   isOperational: boolean;
+  retryInMs?: number;
 
   constructor(message: string, statusCode: number = 500) {
     super(message);
@@ -34,5 +35,6 @@ export function errorHandler(
     success: false,
     message,
     ...(config.nodeEnv === 'development' && { stack: err.stack }),
+    ...(err instanceof AppError && err.retryInMs != null && { retryInMs: err.retryInMs }),
   });
 }

@@ -3,6 +3,7 @@
  */
 
 import { getPool } from '../db/pool';
+import { PoolClient } from 'pg';
 import type {
   PaymentOrderRow,
   PaymentOrderPublic,
@@ -68,7 +69,8 @@ export class PaymentOrderRepository {
     return { items: rows as unknown as PaymentOrderPublic[], total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
   }
 
-  async updateStatus(id: number, status: PaymentOrderStatus, extra: Record<string, unknown> = {}): Promise<PaymentOrderRow | null> {
+  async updateStatus(id: number, status: PaymentOrderStatus, extra: Record<string, unknown> = {}, client?: PoolClient): Promise<PaymentOrderRow | null> {
+    const pool = client ?? getPool();
     const sets: string[] = ['status = $1', 'updated_at = NOW()'];
     const params: unknown[] = [status];
     let idx = 2;
@@ -78,15 +80,16 @@ export class PaymentOrderRepository {
         params.push(value);
       }
     }
-    const { rows } = await getPool().query(
-      `UPDATE payment_orders SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
+    const { rows } = await pool.query(
+      `UPDATE payment_orders SET ${sets.join(', ')} WHERE id = ${idx} RETURNING *`,
       [...params, id]
     );
     return (rows as unknown as PaymentOrderRow[])[0] || null;
   }
 
-  async updateFromWebhook(orderId: string, data: Record<string, unknown>): Promise<PaymentOrderRow | null> {
-    const { rows } = await getPool().query(
+  async updateFromWebhook(orderId: string, data: Record<string, unknown>, client?: PoolClient): Promise<PaymentOrderRow | null> {
+    const pool = client ?? getPool();
+    const { rows } = await pool.query(
       `UPDATE payment_orders SET status = COALESCE($1, status), cf_payment_id = COALESCE($2, cf_payment_id),
               cf_authorization_id = COALESCE($3, cf_authorization_id), payment_method = COALESCE($4, payment_method),
               error_code = COALESCE($5, error_code), error_message = COALESCE($6, error_message),

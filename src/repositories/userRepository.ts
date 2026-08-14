@@ -56,9 +56,11 @@ export class UserRepository {
 
   /** New: register with username as well */
   async createWithUsername(email: string, username: string, passwordHash: string): Promise<number> {
+    // Defensive: never store empty string as username — use NULL instead
+    const safeUsername = username && username.trim() ? username.trim() : null;
     const { rows } = await getPool().query(
       'INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id',
-      [email.toLowerCase().trim(), username, passwordHash]
+      [email.toLowerCase().trim(), safeUsername, passwordHash]
     );
     const result = (rows as unknown as Array<{ id: number }>)[0];
     return result?.id ?? 0;

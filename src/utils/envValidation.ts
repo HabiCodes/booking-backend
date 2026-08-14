@@ -23,21 +23,27 @@ type ValidationRule = {
 const PRODUCTION_REQUIRED: ValidationRule[] = [
   { key: 'JWT_SECRET', required: true, hint: 'A long random string — used to sign user JWTs.' },
   { key: 'ADMIN_JWT_SECRET', required: true, hint: 'A long random string — used to sign admin JWTs.' },
+  { key: 'ORGANIZER_JWT_SECRET', required: true, hint: 'A long random string — used to sign organizer JWTs.' },
   { key: 'QR_SIGNING_SECRET', required: true, hint: 'A long random string — used to sign ticket QR payloads.' },
   {
     key: 'JWT_SECRET',
-    validate: (v) => v.length >= 16,
-    hint: 'JWT_SECRET must be at least 16 characters in production.',
+    validate: (v) => v.length >= 32,
+    hint: 'JWT_SECRET must be at least 32 characters in production.',
   },
   {
     key: 'ADMIN_JWT_SECRET',
-    validate: (v) => v.length >= 16,
-    hint: 'ADMIN_JWT_SECRET must be at least 16 characters in production.',
+    validate: (v) => v.length >= 32,
+    hint: 'ADMIN_JWT_SECRET must be at least 32 characters in production.',
+  },
+  {
+    key: 'ORGANIZER_JWT_SECRET',
+    validate: (v) => v.length >= 32,
+    hint: 'ORGANIZER_JWT_SECRET must be at least 32 characters in production.',
   },
   {
     key: 'QR_SIGNING_SECRET',
-    validate: (v) => v.length >= 16,
-    hint: 'QR_SIGNING_SECRET must be at least 16 characters in production.',
+    validate: (v) => v.length >= 32,
+    hint: 'QR_SIGNING_SECRET must be at least 32 characters in production.',
   },
   {
     key: 'CORS_ORIGIN',
@@ -47,13 +53,32 @@ const PRODUCTION_REQUIRED: ValidationRule[] = [
 ];
 
 const DEVELOPMENT_REQUIRED: ValidationRule[] = [
-  // In dev we tolerate missing JWT secrets — the config layer provides
-  // dev defaults. We still warn so devs know they should set them.
+  {
+    key: 'JWT_SECRET',
+    validate: (v) => v.length >= 16 || v.length === 0,
+    hint: 'JWT_SECRET is using the hardcoded dev default. Set a real value for consistent sessions.',
+  },
+  {
+    key: 'ADMIN_JWT_SECRET',
+    validate: (v) => v.length >= 16 || v.length === 0,
+    hint: 'ADMIN_JWT_SECRET is using the hardcoded dev default.',
+  },
+  {
+    key: 'ORGANIZER_JWT_SECRET',
+    validate: (v) => v.length >= 16 || v.length === 0,
+    hint: 'ORGANIZER_JWT_SECRET is using the hardcoded dev default.',
+  },
+  {
+    key: 'QR_SIGNING_SECRET',
+    validate: (v) => v.length >= 16 || v.length === 0,
+    hint: 'QR_SIGNING_SECRET is using the hardcoded dev default.',
+  },
 ];
 
 const PLACEHOLDER_VALUES = [
   'change-me-user-secret',
   'change-me-admin-secret',
+  'change-me-organizer-secret',
   'change-me-qr-secret',
   'change-me-now',
 ];
@@ -105,6 +130,19 @@ export function validateEnv(): EnvValidationResult {
   // CORS sanity
   if (isProd && process.env.CORS_ORIGIN === '*') {
     errors.push('CORS_ORIGIN=* is not allowed in production.');
+  }
+
+  // Cross-env: warn (or error in prod) when known placeholder secrets are active
+  const sensitiveKeys = ['JWT_SECRET', 'ADMIN_JWT_SECRET', 'ORGANIZER_JWT_SECRET', 'QR_SIGNING_SECRET'];
+  for (const key of sensitiveKeys) {
+    const value = process.env[key];
+    if (value && isPlaceholder(value)) {
+      if (isProd) {
+        errors.push(`${key} still has placeholder value "${value}". Generate a real secret.`);
+      } else {
+        warnings.push(`${key} uses placeholder value "${value}". Set a real secret before production.`);
+      }
+    }
   }
 
   // Email sanity — warn but don't fail; in production missing the Hostinger
