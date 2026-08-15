@@ -810,6 +810,7 @@ export interface OrganizerApplicationRow {
   logo_url: string | null;
   description: string | null;
   branding_metadata: Record<string, unknown>;
+  listing_category: 'turf' | 'events' | 'movies' | 'concerts' | 'other';
   status: OrganizerAppStatus;
   rejection_type: 'soft' | 'hard' | null;
   rejection_reason: string | null;
@@ -843,6 +844,7 @@ export interface OrganizerApplicationCreateInput {
   logo_url?: string | null;
   description?: string | null;
   branding_metadata?: Record<string, unknown>;
+  listing_category: 'turf' | 'events' | 'movies' | 'concerts' | 'other';
 }
 
 export interface OrganizerApplicationReviewInput {
@@ -859,6 +861,7 @@ export interface OrganizerApplicationPublic {
   city: string | null;
   state: string | null;
   country: string;
+  listing_category: 'turf' | 'events' | 'movies' | 'concerts' | 'other';
   status: OrganizerAppStatus;
   rejection_type: 'soft' | 'hard' | null;
   rejection_reason: string | null;

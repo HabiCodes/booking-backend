@@ -17,6 +17,7 @@ const pool_1 = require("../db/pool");
 const organizerAppRepository_1 = require("../repositories/organizerAppRepository");
 const organizationRepository_1 = require("../repositories/organizationRepository");
 const organizerUserRepository_1 = require("../repositories/organizerUserRepository");
+const organizerPasswordTokenService_1 = require("./organizerPasswordTokenService");
 // ── Default manager permissions ───────────────────────────────────────────────
 const DEFAULT_MANAGER_PERMISSIONS = {
     'events:read': true,
@@ -94,8 +95,8 @@ class OrganizerApplicationService {
             logger_1.logger.info('Organizer application approved', {
                 applicationId, organizationId: organization.id, ownerId: owner.id, adminId: actor.adminId,
             });
-            // 5) Generate password-setup token
-            const passwordTokenRaw = (0, safeToken_1.generateSecureToken)(32);
+            // 5) Generate password-setup token (persisted as SHA-256 hash)
+            const passwordTokenRaw = await organizerPasswordTokenService_1.organizerPasswordTokenService.generate(owner.id);
             return {
                 application: { ...app, status: 'approved', organization_id: organization.id },
                 history,
@@ -213,6 +214,11 @@ class OrganizerApplicationService {
                 submitted_at: new Date().toISOString(),
                 rejection_type: null,
                 rejection_reason: null,
+                hard_rejected_by: null,
+                hard_rejected_at: null,
+                reviewed_by: null,
+                reviewed_at: null,
+                organization_id: null, // allow re-provisioning on re-approval
             });
             return { application: updated, isNew: false };
         }

@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { organizerAuthService } from '../services/organizerAuthService';
 import { organizerUserRepository } from '../repositories/organizerUserRepository';
+import { organizerPasswordTokenService } from '../services/organizerPasswordTokenService';
 import { AppError } from '../middleware/errorHandler';
 import { sanitizeString } from '../middleware/validator';
+import { validatePassword, defaultPasswordPolicy } from '../utils/passwordPolicy';
 
 export async function login(req: Request, res: Response, next: NextFunction) {
   try {
@@ -22,6 +24,48 @@ export async function login(req: Request, res: Response, next: NextFunction) {
         user: result.user,
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
+      },
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function setupPassword(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { token, password } = req.body;
+    if (!token || !password) {
+      throw new AppError('token and password are required', 400);
+    }
+
+    // Enforce the full password policy (same as regular registration)
+    const policyCheck = validatePassword(password, defaultPasswordPolicy);
+    if (!policyCheck.valid) {
+      throw new AppError(`Password does not meet requirements: ${policyCheck.errors.join(', ')}`, 400);
+    }
+
+    // Consume the token and set password
+    const result = await organizerPasswordTokenService.consume(token, password);
+
+    // Get user for response
+    const user = await organizerUserRepository.findById(result.userId);
+    if (!user) {
+      throw new AppError('User not found after password setup', 404);
+    }
+
+    // Issue JWT so the owner can immediately log in
+    const loginResult = await organizerAuthService.login({
+      email: user.email,
+      password,
+    });
+
+    res.json({
+      success: true,
+      message: 'Password set successfully',
+      data: {
+        user: loginResult.user,
+        accessToken: loginResult.accessToken,
+        refreshToken: loginResult.refreshToken,
       },
     });
   } catch (err) {

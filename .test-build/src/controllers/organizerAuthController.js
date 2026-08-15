@@ -1,10 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.login = login;
+exports.setupPassword = setupPassword;
 exports.refresh = refresh;
 const organizerAuthService_1 = require("../services/organizerAuthService");
+const organizerUserRepository_1 = require("../repositories/organizerUserRepository");
+const organizerPasswordTokenService_1 = require("../services/organizerPasswordTokenService");
 const errorHandler_1 = require("../middleware/errorHandler");
 const validator_1 = require("../middleware/validator");
+const passwordPolicy_1 = require("../utils/passwordPolicy");
 async function login(req, res, next) {
     try {
         const { email, password } = req.body;
@@ -21,6 +25,43 @@ async function login(req, res, next) {
                 user: result.user,
                 accessToken: result.accessToken,
                 refreshToken: result.refreshToken,
+            },
+        });
+    }
+    catch (err) {
+        return next(err);
+    }
+}
+async function setupPassword(req, res, next) {
+    try {
+        const { token, password } = req.body;
+        if (!token || !password) {
+            throw new errorHandler_1.AppError('token and password are required', 400);
+        }
+        // Enforce the full password policy (same as regular registration)
+        const policyCheck = (0, passwordPolicy_1.validatePassword)(password, passwordPolicy_1.defaultPasswordPolicy);
+        if (!policyCheck.valid) {
+            throw new errorHandler_1.AppError(`Password does not meet requirements: ${policyCheck.errors.join(', ')}`, 400);
+        }
+        // Consume the token and set password
+        const result = await organizerPasswordTokenService_1.organizerPasswordTokenService.consume(token, password);
+        // Get user for response
+        const user = await organizerUserRepository_1.organizerUserRepository.findById(result.userId);
+        if (!user) {
+            throw new errorHandler_1.AppError('User not found after password setup', 404);
+        }
+        // Issue JWT so the owner can immediately log in
+        const loginResult = await organizerAuthService_1.organizerAuthService.login({
+            email: user.email,
+            password,
+        });
+        res.json({
+            success: true,
+            message: 'Password set successfully',
+            data: {
+                user: loginResult.user,
+                accessToken: loginResult.accessToken,
+                refreshToken: loginResult.refreshToken,
             },
         });
     }

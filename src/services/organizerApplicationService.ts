@@ -26,6 +26,7 @@ import type {
 import { organizerAppRepository } from '../repositories/organizerAppRepository';
 import { organizationRepository } from '../repositories/organizationRepository';
 import { organizerUserRepository } from '../repositories/organizerUserRepository';
+import { organizerPasswordTokenService } from './organizerPasswordTokenService';
 
 // ── Default manager permissions ───────────────────────────────────────────────
 
@@ -122,8 +123,8 @@ export class OrganizerApplicationService {
         applicationId, organizationId: organization.id, ownerId: owner.id, adminId: actor.adminId,
       });
 
-      // 5) Generate password-setup token
-      const passwordTokenRaw = generateSecureToken(32);
+      // 5) Generate password-setup token (persisted as SHA-256 hash)
+      const passwordTokenRaw = await organizerPasswordTokenService.generate(owner.id);
 
       return {
         application: { ...app, status: 'approved', organization_id: organization.id },
@@ -264,6 +265,11 @@ export class OrganizerApplicationService {
         submitted_at: new Date().toISOString(),
         rejection_type: null,
         rejection_reason: null,
+        hard_rejected_by: null,
+        hard_rejected_at: null,
+        reviewed_by: null,
+        reviewed_at: null,
+        organization_id: null,  // allow re-provisioning on re-approval
       } as Partial<OrganizerApplicationRow>);
 
       return { application: updated, isNew: false };

@@ -21,6 +21,7 @@ import { promotionPublicRoutes, promotionOrganizerRoutes, promotionAdminRoutes }
 import organizerAuthRoutes from './routes/organizerAuthRoutes';
 import organizerEventRoutes from './routes/organizerEventRoutes';
 import organizerOrganizationRoutes from './routes/organizerOrganizationRoutes';
+import { organizerApplicationRoutes } from './routes/organizerApplicationRoutes';
 import { logger } from './utils/logger';
 import { ensureUploadDirs } from './services/uploadService';
 import {
@@ -156,6 +157,7 @@ app.use('/api/admin', adminProtectedRoutes);
 app.use('/api/organizer/auth', organizerAuthRoutes);
 app.use('/api/organizer/events', organizerEventRoutes);
 app.use('/api/organizer/organizations', organizerOrganizationRoutes);
+app.use('/api/organizer/applications', organizerApplicationRoutes);
 
 // ── API documentation ────────────────────────────────────────────────────────
 
