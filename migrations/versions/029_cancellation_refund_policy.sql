@@ -81,7 +81,7 @@ CREATE TRIGGER trg_refund_policies_updated_at
 -- Seed the global default policy slabs (idempotent).
 -- 48h+ → 90%, 24h+ → 75%, 12h+ → 50%, 0h+ → 0%.
 INSERT INTO refund_policies (scope, organization_id, version, hours_before, refund_percentage, is_active, notes)
-SELECT v.scope, NULL, 1, v.hours_before, v.refund_percentage, true, v.notes
+SELECT 'global', NULL, 1, v.hours_before, v.refund_percentage, true, v.notes
 FROM (VALUES
   (48.00, 90.00, 'Default global: 48h+ before event → 90% refund'),
   (24.00, 75.00, 'Default global: 24h+ before event → 75% refund'),

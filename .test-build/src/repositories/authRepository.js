@@ -52,17 +52,44 @@ class AuthRepository {
         return row[0]?.attempted_at ? new Date(row[0].attempted_at) : null;
     }
     // ── Refresh Tokens ──────────────────────────────────────────────────────
-    async createRefreshToken(userId, tokenHash, deviceInfo, ipAddress, expiresAt) {
-        const { rows } = await (0, pool_1.getPool)().query(`INSERT INTO refresh_tokens (user_id, token_hash, device_info, ip_address, expires_at)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`, [userId, tokenHash, deviceInfo, ipAddress, expiresAt]);
+    async createRefreshToken(userId, tokenHash, sessionId, deviceInfo, ipAddress, expiresAt) {
+        const { rows } = await (0, pool_1.getPool)().query(`INSERT INTO refresh_tokens (user_id, token_hash, session_id, device_info, ip_address, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, [userId, tokenHash, sessionId, deviceInfo, ipAddress, expiresAt]);
         return rowToNumber(rows[0]);
     }
     async findRefreshTokenByHash(tokenHash) {
         const { rows } = await (0, pool_1.getPool)().query('SELECT * FROM refresh_tokens WHERE token_hash = $1 LIMIT 1', [tokenHash]);
         return rows[0] || null;
     }
+    /**
+     * Atomically find-and-consume a refresh token in a single query.
+     *
+     * Returns the consumed row if the token was valid and unrevoked.
+     * Returns null if the token was already revoked (concurrent rotation detected)
+     * or doesn't exist.
+     *
+     * This replaces the separate findRefreshTokenByHash + rotateRefreshToken pattern
+     * to eliminate the TOCTOU window where two concurrent requests could both pass
+     * validation before either revokes the token.
+     */
+    async findAndConsumeRefreshToken(tokenHash) {
+        const { rows } = await (0, pool_1.getPool)().query(`UPDATE refresh_tokens SET revoked = true
+       WHERE token_hash = $1 AND revoked = false AND expires_at > NOW()
+       RETURNING *`, [tokenHash]);
+        return rows[0] || null;
+    }
     async revokeRefreshToken(tokenHash) {
         const result = await (0, pool_1.getPool)().query('UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1', [tokenHash]);
+        return (result.rowCount ?? 0) > 0;
+    }
+    /**
+     * Atomically revoke a refresh token ONLY if it is not already revoked.
+     * Returns the number of rows updated (1 = success, 0 = already revoked).
+     * This single UPDATE replaces the find-then-revoke pattern to prevent
+     * TOCTOU race conditions during concurrent refresh attempts.
+     */
+    async rotateRefreshToken(tokenHash) {
+        const result = await (0, pool_1.getPool)().query('UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1 AND revoked = false', [tokenHash]);
         return (result.rowCount ?? 0) > 0;
     }
     async revokeAllUserRefreshTokens(userId) {
@@ -150,6 +177,20 @@ class AuthRepository {
     }
     async markPendingConsumed(id) {
         await (0, pool_1.getPool)().query('UPDATE pending_registrations SET consumed_at = NOW() WHERE id = $1', [id]);
+    }
+    /**
+     * Atomically mark a pending registration as consumed ONLY if it hasn't
+     * already been consumed. Returns the consumed row if successful, null
+     * if it was already consumed (concurrent verification detected).
+     *
+     * This replaces the separate verify-then-consume pattern to prevent
+     * TOCTOU race conditions during concurrent OTP verification attempts.
+     */
+    async verifyAndConsumeOtp(id) {
+        const result = await (0, pool_1.getPool)().query(`UPDATE pending_registrations SET consumed_at = NOW()
+       WHERE id = $1 AND consumed_at IS NULL AND expires_at > NOW()
+       RETURNING id`, [id]);
+        return (result.rowCount ?? 0) > 0;
     }
     async deletePendingRegistration(id) {
         await (0, pool_1.getPool)().query('DELETE FROM pending_registrations WHERE id = $1', [id]);

@@ -34,16 +34,17 @@ class OrganizerAuthService {
     async issueTokens(user) {
         const payload = {
             id: user.id,
-            organizationId: user.organization_id,
-            email: user.email,
+            sub: user.email,
+            organization_id: user.organization_id,
             name: user.name,
             role: user.role,
             permissions: user.permissions || {},
+            typ: 'organizer_access',
         };
         const accessToken = jsonwebtoken_1.default.sign(payload, config_1.config.jwt.organizerSecret, {
             expiresIn: config_1.config.jwt.organizerExpiresIn,
         });
-        const refreshToken = jsonwebtoken_1.default.sign({ sub: user.id, type: 'organizer_refresh' }, config_1.config.jwt.organizerSecret, { expiresIn: '30d' });
+        const refreshToken = jsonwebtoken_1.default.sign({ sub: user.id, typ: 'organizer_refresh' }, config_1.config.jwt.organizerSecret, { expiresIn: '30d' });
         const { password_hash: _pw, ...safeUser } = user;
         return {
             user: safeUser,

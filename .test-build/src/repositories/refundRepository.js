@@ -6,8 +6,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.refundRepository = exports.RefundRepository = void 0;
 const pool_1 = require("../db/pool");
 class RefundRepository {
-    async create(input) {
-        const { rows } = await (0, pool_1.getPool)().query(`INSERT INTO refunds (payment_order_id, booking_id, amount, currency, reason, refund_type, status)
+    async create(input, client) {
+        const pool = client ?? (0, pool_1.getPool)();
+        const { rows } = await pool.query(`INSERT INTO refunds (payment_order_id, booking_id, amount, currency, reason, refund_type, status)
        VALUES ($1,$2,$3,$4,$5,$6,'PENDING')
        RETURNING *`, [input.payment_order_id, input.booking_id, input.amount, 'INR', input.reason || null, input.refund_type || 'customer_initiated']);
         return rows[0];
@@ -45,17 +46,18 @@ class RefundRepository {
         const { rows } = await (0, pool_1.getPool)().query(`SELECT r.* FROM refunds r JOIN payment_orders po ON po.id = r.payment_order_id ${where} ORDER BY r.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`, [...params, pageSize, offset]);
         return { items: rows, total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
     }
-    async updateStatus(id, status, extra = {}) {
+    async updateStatus(id, status, extra = {}, client) {
+        const pool = client ?? (0, pool_1.getPool)();
         const sets = ['status = $1', 'updated_at = NOW()'];
         const params = [status];
         let idx = 2;
         for (const [key, value] of Object.entries(extra)) {
             if (value !== undefined) {
-                sets.push(`${key} = $${idx++}`);
+                sets.push(`${key} = ${idx++}`);
                 params.push(value);
             }
         }
-        const { rows } = await (0, pool_1.getPool)().query(`UPDATE refunds SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`, [...params, id]);
+        const { rows } = await pool.query(`UPDATE refunds SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`, [...params, id]);
         return rows[0] || null;
     }
 }

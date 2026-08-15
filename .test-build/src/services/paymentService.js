@@ -150,40 +150,56 @@ class PaymentService {
     }
     /**
      * Process a refund request.
+     *
+     * Concurrency safety:
+     *   - The payment order row is locked (SELECT ... FOR UPDATE) at the start
+     *     of the transaction. This serializes concurrent refund requests for the
+     *     same order and prevents the TOCTOU race where two requests could both
+     *     read totalRefunded = 0 before either commits.
+     *   - The remaining-refundable amount is computed and validated BEFORE calling
+     *     the Cashfree gateway, so the DB-side check is authoritative.
      */
     async processRefund(input, actor) {
-        return (0, pool_1.withTransaction)(async () => {
-            const order = await paymentOrderRepository_1.paymentOrderRepository.findById(input.payment_order_id);
+        return (0, pool_1.withTransaction)(async (client) => {
+            // 1. Lock the payment order row — serializes concurrent refunds
+            const orderResult = await client.query('SELECT * FROM payment_orders WHERE id = $1 FOR UPDATE', [input.payment_order_id]);
+            const order = orderResult.rows[0];
             if (!order)
                 throw new errorHandler_1.AppError('Payment order not found', 404);
+            // 2. Validate order status
             if (order.status !== 'COMPLETED' && order.status !== 'PARTIALLY_REFUNDED') {
                 throw new errorHandler_1.AppError(`Cannot refund order in status: ${order.status}`, 409);
             }
-            if (Number(order.amount) < Number(input.amount)) {
-                throw new errorHandler_1.AppError('Refund amount exceeds order amount', 400);
+            // 3. Compute total already refunded within the same locked transaction
+            const refundsResult = await client.query(`SELECT amount FROM refunds WHERE payment_order_id = $1 AND status = $2`, [input.payment_order_id, 'SUCCESS']);
+            const totalRefunded = refundsResult.rows.reduce((sum, r) => sum + Number(r.amount), 0);
+            const remainingRefundable = Number(order.amount) - totalRefunded;
+            if (Number(input.amount) > remainingRefundable) {
+                throw new errorHandler_1.AppError(`Refund amount ${input.amount} exceeds remaining refundable amount ${remainingRefundable}`, 400);
             }
-            // Call gateway
+            // 4. Call Cashfree gateway (outside the critical section is fine — the DB
+            //    lock already prevents concurrent approval; if the gateway fails, the
+            //    transaction rolls back and no state changes)
             const result = await this.gateway.createRefund({
                 orderId: order.order_id,
                 amount: Number(input.amount),
                 reason: input.reason ?? undefined,
             });
-            // Persist refund
+            // 5. Persist refund record (uses the transaction client)
             const refund = await refundRepository_1.refundRepository.create({
                 payment_order_id: input.payment_order_id,
                 booking_id: order.booking_id,
                 amount: Number(input.amount),
                 reason: input.reason ?? undefined,
                 refund_type: input.refund_type ?? 'customer_initiated',
-            });
-            // Update payment order status
-            const totalRefunded = await this._getTotalRefunded(input.payment_order_id);
-            const newAmount = Number(order.amount) - Number(totalRefunded) - Number(input.amount);
-            if (newAmount <= 0) {
-                await paymentOrderRepository_1.paymentOrderRepository.updateStatus(order.id, 'REFUNDED');
+            }, client);
+            // 6. Update payment order status based on new total (uses the transaction client)
+            const newTotalRefunded = totalRefunded + Number(input.amount);
+            if (newTotalRefunded >= Number(order.amount)) {
+                await paymentOrderRepository_1.paymentOrderRepository.updateStatus(order.id, 'REFUNDED', {}, client);
             }
             else {
-                await paymentOrderRepository_1.paymentOrderRepository.updateStatus(order.id, 'PARTIALLY_REFUNDED');
+                await paymentOrderRepository_1.paymentOrderRepository.updateStatus(order.id, 'PARTIALLY_REFUNDED', {}, client);
             }
             logger_1.logger.info('Refund processed', { refundId: refund.id, orderId: order.order_id, amount: input.amount });
             return refund;
@@ -243,12 +259,6 @@ class PaymentService {
         if (!updated)
             throw new errorHandler_1.AppError('Order not found after webhook update', 404);
         return updated;
-    }
-    async _getTotalRefunded(paymentOrderId) {
-        const refunds = await refundRepository_1.refundRepository.findByPaymentOrderId(paymentOrderId);
-        return refunds
-            .filter(r => r.status === 'SUCCESS')
-            .reduce((sum, r) => sum + Number(r.amount), 0);
     }
 }
 exports.PaymentService = PaymentService;

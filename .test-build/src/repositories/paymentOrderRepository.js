@@ -54,7 +54,8 @@ class PaymentOrderRepository {
         const { rows } = await (0, pool_1.getPool)().query(`SELECT * FROM payment_orders WHERE ${where} ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`, [...params, pageSize, offset]);
         return { items: rows, total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
     }
-    async updateStatus(id, status, extra = {}) {
+    async updateStatus(id, status, extra = {}, client) {
+        const pool = client ?? (0, pool_1.getPool)();
         const sets = ['status = $1', 'updated_at = NOW()'];
         const params = [status];
         let idx = 2;
@@ -64,11 +65,12 @@ class PaymentOrderRepository {
                 params.push(value);
             }
         }
-        const { rows } = await (0, pool_1.getPool)().query(`UPDATE payment_orders SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`, [...params, id]);
+        const { rows } = await pool.query(`UPDATE payment_orders SET ${sets.join(', ')} WHERE id = ${idx} RETURNING *`, [...params, id]);
         return rows[0] || null;
     }
-    async updateFromWebhook(orderId, data) {
-        const { rows } = await (0, pool_1.getPool)().query(`UPDATE payment_orders SET status = COALESCE($1, status), cf_payment_id = COALESCE($2, cf_payment_id),
+    async updateFromWebhook(orderId, data, client) {
+        const pool = client ?? (0, pool_1.getPool)();
+        const { rows } = await pool.query(`UPDATE payment_orders SET status = COALESCE($1, status), cf_payment_id = COALESCE($2, cf_payment_id),
               cf_authorization_id = COALESCE($3, cf_authorization_id), payment_method = COALESCE($4, payment_method),
               error_code = COALESCE($5, error_code), error_message = COALESCE($6, error_message),
               verified_at = NOW(), verified_by = 'webhook', retry_count = retry_count + 1, updated_at = NOW()

@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const adminController_1 = require("../controllers/adminController");
+const adminRefundController_1 = require("../controllers/adminRefundController");
 const adminAuth_1 = require("../middleware/adminAuth");
 const adminOrganizerController_1 = require("../controllers/adminOrganizerController");
 const permissions_1 = require("../middleware/permissions");
@@ -57,4 +58,8 @@ router.post('/managers', (0, permissions_1.requirePermission)('organizer:staff:w
 router.patch('/managers/:id', (0, permissions_1.requirePermission)('organizer:staff:write'), (0, audit_1.auditMiddleware)('organizer.manager.update'), adminOrganizerController_1.adminOrganizerController.updateManager);
 router.post('/managers/:id/deactivate', (0, permissions_1.requirePermission)('organizer:staff:write'), adminOrganizerController_1.adminOrganizerController.deactivateManager);
 router.post('/managers/:id/reactivate', (0, permissions_1.requirePermission)('organizer:staff:write'), adminOrganizerController_1.adminOrganizerController.reactivateManager);
+// Refund management
+router.get('/refunds', (0, permissions_1.requirePermission)('payment:read'), (0, audit_1.auditMiddleware)('admin.refund.list'), adminRefundController_1.adminListRefunds);
+router.get('/refunds/:id', (0, permissions_1.requirePermission)('payment:read'), (0, audit_1.auditMiddleware)('admin.refund.view'), adminRefundController_1.adminGetRefund);
+router.post('/refunds', (0, permissions_1.requirePermission)('payment:write'), (0, audit_1.auditMiddleware)('admin.refund.create'), adminRefundController_1.adminCreateRefund);
 exports.default = router;

@@ -26,5 +26,6 @@ function errorHandler(err, req, res, _next) {
         success: false,
         message,
         ...(config_1.config.nodeEnv === 'development' && { stack: err.stack }),
+        ...(err instanceof AppError && err.retryInMs != null && { retryInMs: err.retryInMs }),
     });
 }

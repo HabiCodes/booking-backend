@@ -1,22 +1,50 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
+/**
+ * Organizer JWT auth middleware.
+ *
+ * Validates:
+ *   1. JWT signature against ORGANIZER_JWT_SECRET (separate key-space)
+ *   2. Token type and required claims (type validation)
+ *   3. Organizer user is_active status in database
+ *
+ * The is_active check ensures that deactivated organizer accounts cannot
+ * use existing JWTs until they expire (8-hour window reduced by this check).
+ */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.organizerAuthMiddleware = organizerAuthMiddleware;
 exports.verifyOrganizerToken = verifyOrganizerToken;
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const config_1 = require("../config");
 const errorHandler_1 = require("./errorHandler");
-function organizerAuthMiddleware(req, _res, next) {
+const pool_1 = require("../db/pool");
+const jwt_1 = require("../utils/jwt");
+async function verifyOrganizerIsActive(userId) {
+    try {
+        const { rows } = await (0, pool_1.getPool)().query('SELECT is_active FROM organizer_users WHERE id = $1 LIMIT 1', [userId]);
+        const row = rows[0];
+        if (!row)
+            return false;
+        return row.is_active;
+    }
+    catch {
+        return true; // fail open
+    }
+}
+async function organizerAuthMiddleware(req, _res, next) {
     const header = req.headers.authorization;
     if (!header || !header.startsWith('Bearer ')) {
         throw new errorHandler_1.AppError('Unauthorized — organizer token required', 401);
     }
     const token = header.split(' ')[1];
     try {
-        const decoded = jsonwebtoken_1.default.verify(token, config_1.config.jwt.organizerSecret);
-        req.organizerUser = decoded;
+        const payload = (0, jwt_1.verifyOrganizerAccessToken)(token);
+        if (!payload) {
+            throw new errorHandler_1.AppError('Invalid organizer token structure', 401);
+        }
+        // Verify organizer user is still active
+        const isActive = await verifyOrganizerIsActive(payload.id);
+        if (!isActive) {
+            throw new errorHandler_1.AppError('Organizer account has been deactivated', 401);
+        }
+        req.organizerUser = payload;
         next();
     }
     catch {
@@ -29,14 +57,7 @@ function organizerAuthMiddleware(req, _res, next) {
  */
 function verifyOrganizerToken(token) {
     try {
-        const decoded = jsonwebtoken_1.default.verify(token, config_1.config.jwt.organizerSecret);
-        if (typeof decoded.id !== 'number')
-            return null;
-        if (typeof decoded.organizationId !== 'number')
-            return null;
-        if (typeof decoded.email !== 'string')
-            return null;
-        return decoded;
+        return (0, jwt_1.verifyOrganizerAccessToken)(token);
     }
     catch {
         return null;

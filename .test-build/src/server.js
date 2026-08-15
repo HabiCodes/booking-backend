@@ -56,7 +56,22 @@ app.use((0, cors_1.default)({
 }));
 // Compression
 app.use((0, compression_1.default)());
-// Body parsing
+// ── Body parsing ──────────────────────────────────────────────────────────────
+// Raw body capture must happen BEFORE JSON parsing so webhook signature
+// verification can use the exact original bytes.
+app.use((req, res, next) => {
+    if (req.method === 'POST' && req.path.startsWith('/turf/webhooks/')) {
+        const chunks = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', () => {
+            req.rawBody = Buffer.concat(chunks);
+            next();
+        });
+    }
+    else {
+        next();
+    }
+});
 app.use(express_1.default.json({ limit: '100kb' }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '100kb' }));
 // ── Rate limiting ─────────────────────────────────────────────────────────────

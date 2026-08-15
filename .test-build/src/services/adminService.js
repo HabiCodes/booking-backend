@@ -27,6 +27,7 @@ function rowToRecord(r) {
         is_active: Boolean(r.is_active),
         last_login_at: r.last_login_at,
         permissions: normalizePermissions(r.permissions),
+        permissions_updated_at: r.permissions_updated_at ?? null,
     };
 }
 class AdminService {
@@ -49,7 +50,7 @@ class AdminService {
             throw new errorHandler_1.AppError('Invalid credentials', 401);
         }
         const effectivePermissions = (0, permissions_1.computePermissions)(admin.role, admin.permissions);
-        const token = (0, jwt_1.generateAdminAccessToken)(admin.id, admin.email, admin.role, effectivePermissions);
+        const token = (0, jwt_1.generateAdminAccessToken)(admin.id, admin.email, admin.role, effectivePermissions, admin.permissions_updated_at);
         // best-effort last_login update
         try {
             await (0, pool_1.getPool)().query('UPDATE admins SET last_login_at = NOW() WHERE id = $1', [admin.id]);
@@ -102,11 +103,11 @@ class AdminService {
         return (rowCount ?? 0) > 0;
     }
     async updateRole(id, role) {
-        const { rowCount } = await (0, pool_1.getPool)().query('UPDATE admins SET role = $1 WHERE id = $2', [role, id]);
+        const { rowCount } = await (0, pool_1.getPool)().query('UPDATE admins SET role = $1, permissions_updated_at = NOW() WHERE id = $2', [role, id]);
         return (rowCount ?? 0) > 0;
     }
     async updatePermissions(id, permissions) {
-        const { rowCount } = await (0, pool_1.getPool)().query('UPDATE admins SET permissions = $1 WHERE id = $2', [JSON.stringify(permissions), id]);
+        const { rowCount } = await (0, pool_1.getPool)().query('UPDATE admins SET permissions = $1, permissions_updated_at = NOW() WHERE id = $2', [JSON.stringify(permissions), id]);
         return (rowCount ?? 0) > 0;
     }
 }

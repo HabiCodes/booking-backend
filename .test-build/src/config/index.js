@@ -40,7 +40,7 @@ exports.config = {
     },
     jwt: {
         secret: process.env.JWT_SECRET || 'change-me-user-secret',
-        expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+        expiresIn: process.env.JWT_EXPIRES_IN || '15m',
         adminSecret: process.env.ADMIN_JWT_SECRET || 'change-me-admin-secret',
         adminExpiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '12h',
         organizerSecret: process.env.ORGANIZER_JWT_SECRET || 'change-me-organizer-secret',

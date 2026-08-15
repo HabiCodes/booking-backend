@@ -23,6 +23,7 @@ const SAVED = {
     NODE_ENV: process.env.NODE_ENV,
     JWT_SECRET: process.env.JWT_SECRET,
     ADMIN_JWT_SECRET: process.env.ADMIN_JWT_SECRET,
+    ORGANIZER_JWT_SECRET: process.env.ORGANIZER_JWT_SECRET,
     QR_SIGNING_SECRET: process.env.QR_SIGNING_SECRET,
     CORS_ORIGIN: process.env.CORS_ORIGIN,
     DATABASE_URL: process.env.DATABASE_URL,
@@ -32,6 +33,7 @@ const SAVED = {
     process.env.NODE_ENV = SAVED.NODE_ENV;
     process.env.JWT_SECRET = SAVED.JWT_SECRET;
     process.env.ADMIN_JWT_SECRET = SAVED.ADMIN_JWT_SECRET;
+    process.env.ORGANIZER_JWT_SECRET = SAVED.ORGANIZER_JWT_SECRET;
     process.env.QR_SIGNING_SECRET = SAVED.QR_SIGNING_SECRET;
     process.env.CORS_ORIGIN = SAVED.CORS_ORIGIN;
     process.env.DATABASE_URL = SAVED.DATABASE_URL;
@@ -43,9 +45,10 @@ const SAVED = {
  */
 function primeProdEnv() {
     process.env.NODE_ENV = 'production';
-    process.env.JWT_SECRET = 'a-real-secret-of-sufficient-length';
-    process.env.ADMIN_JWT_SECRET = 'another-real-secret-12345';
-    process.env.QR_SIGNING_SECRET = 'qr-real-secret-6789012345';
+    process.env.JWT_SECRET = 'a-real-secret-of-sufficient-length-now32';
+    process.env.ADMIN_JWT_SECRET = 'another-real-secret-12345-that-is-now-32';
+    process.env.ORGANIZER_JWT_SECRET = 'organizer-real-secret-1234567890';
+    process.env.QR_SIGNING_SECRET = 'qr-real-secret-6789012345-and-more';
     process.env.CORS_ORIGIN = 'https://app.example.com';
     process.env.DATABASE_URL = 'postgresql://localhost/db';
     delete process.env.DB_HOST;
@@ -72,6 +75,13 @@ function primeProdEnv() {
         strict_1.default.strictEqual(result.valid, false);
         strict_1.default.ok(result.errors.some((e) => String(e).includes('ADMIN_JWT_SECRET')));
     });
+    (0, node_test_1.it)('flags missing ORGANIZER_JWT_SECRET', () => {
+        primeProdEnv();
+        process.env.ORGANIZER_JWT_SECRET = '';
+        const result = (0, envValidation_1.validateEnv)();
+        strict_1.default.strictEqual(result.valid, false);
+        strict_1.default.ok(result.errors.some((e) => String(e).includes('ORGANIZER_JWT_SECRET')));
+    });
     (0, node_test_1.it)('flags missing QR_SIGNING_SECRET', () => {
         primeProdEnv();
         process.env.QR_SIGNING_SECRET = '';
@@ -79,12 +89,12 @@ function primeProdEnv() {
         strict_1.default.strictEqual(result.valid, false);
         strict_1.default.ok(result.errors.some((e) => String(e).includes('QR_SIGNING_SECRET')));
     });
-    (0, node_test_1.it)('flags JWT_SECRET shorter than 16 chars', () => {
+    (0, node_test_1.it)('flags JWT_SECRET shorter than 32 chars', () => {
         primeProdEnv();
         process.env.JWT_SECRET = 'short';
         const result = (0, envValidation_1.validateEnv)();
         strict_1.default.strictEqual(result.valid, false);
-        strict_1.default.ok(result.errors.some((e) => String(e).includes('JWT_SECRET') && String(e).includes('16')));
+        strict_1.default.ok(result.errors.some((e) => String(e).includes('JWT_SECRET') && String(e).includes('32')));
     });
     (0, node_test_1.it)('flags placeholder JWT_SECRET in production', () => {
         primeProdEnv();

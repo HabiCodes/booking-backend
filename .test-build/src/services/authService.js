@@ -1,34 +1,88 @@
 "use strict";
-/**
- * Auth service — production-grade authentication.
- *
- * Design decisions:
- *  - Registration creates user as inactive until email verified (is_verified=false).
- *  - A verification token is sent; the user clicks the link → backend marks user verified.
- *  - Login checks is_verified flag; unverified users get a specific error.
- *  - Brute-force protection via login_attempts (15-min rolling window).
- *  - Refresh token rotation — each /refresh call issues a new pair and revokes the old.
- *  - Device sessions tracked for "logout from specific device" capability.
- *
- * Backward compatibility:
- *  - The legacy register(email, password) and login(email, password) signatures are preserved.
- *  - New endpoints use enhanced versions that include verification and full features.
- */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPool = exports.authService = exports.AuthService = void 0;
 exports.checkAccountLockout = checkAccountLockout;
 exports.generateVerificationLink = generateVerificationLink;
 exports.buildTokenPayload = buildTokenPayload;
 exports.getAuthService = getAuthService;
+/**
+ * Generate a stable, human-readable username from an email address.
+ * Produces the prefix part of the email (before @), lowercased, with
+ * non-alphanumeric characters replaced by underscores, truncated to 20 chars.
+ * Falls back to "user" if nothing usable remains.
+ *
+ * Examples:
+ *   "john@example.com"   → "john"
+ *   "john.doe@example"   → "john_doe"
+ *   "a+b@example.com"    → "a_b"
+ */
+function emailToUsername(email) {
+    const prefix = email.split('@')[0] ?? '';
+    const normalized = prefix.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    return normalized.slice(0, 20) || 'user';
+}
+/**
+ * Generate a unique username.  If the caller supplied one, validate and
+ * normalise it.  If not (or if it would collide), derive one from the email
+ * and, if necessary, append a short random suffix until the database accepts it.
+ *
+ * The database UNIQUE index on username (WHERE username IS NOT NULL) is the
+ * final authority — we catch unique-violation errors and retry.
+ */
+async function resolveUniqueUsername(desiredUsername, repository) {
+    const MAX_RETRIES = 5;
+    // Normalise a caller-supplied username
+    if (desiredUsername && desiredUsername.trim()) {
+        const normalized = desiredUsername.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 20);
+        if (!normalized) {
+            throw new Error('Username must contain at least one alphanumeric character');
+        }
+        const existing = await repository.findByUsername(normalized);
+        if (!existing)
+            return normalized;
+        throw new Error(`Username "${normalized}" is already taken`);
+    }
+    // Derive from email — stable across retries so concurrent attempts
+    // are likely to generate the same candidate, letting the DB break the tie.
+    const base = emailToUsername(desiredUsername ?? 'user');
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const candidate = attempt === 0 ? base : `${base}_${Math.random().toString(36).slice(2, 6)}`;
+        // Quick pre-check to avoid unnecessary DB round-trips on the first attempt
+        const existing = await repository.findByUsername(candidate);
+        if (!existing)
+            return candidate;
+        // If taken, loop and try the next suffix
+    }
+    // Final fallback — use a longer random suffix
+    const fallback = `${base}_${Date.now().toString(36)}`;
+    const existing = await repository.findByUsername(fallback);
+    if (!existing)
+        return fallback;
+    // As an absolute last resort, let the DB raise and the caller handles it
+    return fallback;
+}
 const config_1 = require("../config");
+const errorHandler_1 = require("../middleware/errorHandler");
 const userRepository_1 = require("../repositories/userRepository");
 const authRepository_1 = require("../repositories/authRepository");
 const passwordPolicy_1 = require("../utils/passwordPolicy");
 const safeToken_1 = require("../utils/safeToken");
 const jwt_1 = require("../utils/jwt");
 const logger_1 = require("../utils/logger");
+const redis_1 = require("../db/redis");
 const emailService_1 = require("./emailService");
 const otp_1 = require("../utils/otp");
+const SESSION_REVOKED_PREFIX = 'auth:session:revoked:';
+const SESSION_REVOKED_TTL = 1800; // 30 minutes — exceeds 15min access token lifetime
+async function revokeSessionInRedis(sessionId) {
+    try {
+        const redis = (0, redis_1.getRedis)();
+        await redis.set(`${SESSION_REVOKED_PREFIX}${sessionId}`, '1', 'EX', SESSION_REVOKED_TTL);
+    }
+    catch {
+        // Redis unavailable — revocation still works via DB update
+    }
+}
 const DEFAULT_BRUTE_FORCE = {
     maxAttempts: 5,
     windowMinutes: 15,
@@ -89,12 +143,11 @@ class AuthService {
         // Password policy
         const policyResult = (0, passwordPolicy_1.validatePassword)(password, passwordPolicy_1.defaultPasswordPolicy);
         if (!policyResult.valid) {
-            const err = new Error(policyResult.errors.join('; '));
-            err.statusCode = 400;
-            throw err;
+            throw new errorHandler_1.AppError(policyResult.errors.join('; '), 400);
         }
         const passwordHash = await userRepository_1.userRepository.hashPassword(password);
-        const userId = await userRepository_1.userRepository.createWithUsername(normalizedEmail, username ?? '', passwordHash);
+        const resolvedUsername = await resolveUniqueUsername(username, userRepository_1.userRepository);
+        const userId = await userRepository_1.userRepository.createWithUsername(normalizedEmail, resolvedUsername, passwordHash);
         // Generate verification token
         const rawToken = (0, safeToken_1.generateSecureToken)();
         const tokenHash = (0, safeToken_1.hashToken)(rawToken);
@@ -105,7 +158,7 @@ class AuthService {
         const message = (0, emailService_1.buildVerificationEmail)({
             verificationLink,
             recipientEmail: normalizedEmail,
-            username: username ?? null,
+            username: resolvedUsername,
             expiresInHours: this.verificationExpiryHours,
         });
         await this.emailService.send(message).catch((err) => logger_1.logger.warn('Email send failed:', err));
@@ -121,9 +174,7 @@ class AuthService {
         const normalizedEmail = email.toLowerCase().trim();
         const existing = await userRepository_1.userRepository.findByEmail(normalizedEmail);
         if (existing) {
-            const err = new Error('Email already registered');
-            err.statusCode = 409;
-            throw err;
+            throw new errorHandler_1.AppError('Email already registered', 409);
         }
         const userId = await userRepository_1.userRepository.create(normalizedEmail, password);
         const token = (0, jwt_1.generateAccessToken)(userId, normalizedEmail);
@@ -144,24 +195,18 @@ class AuthService {
         // exists, if a verified user already owns the email we MUST refuse.
         const existingUser = await userRepository_1.userRepository.findByEmail(normalizedEmail);
         if (existingUser) {
-            const err = new Error(`Email "${normalizedEmail}" is already registered`);
-            err.statusCode = 409;
-            throw err;
+            throw new errorHandler_1.AppError(`Email "${normalizedEmail}" is already registered`, 409);
         }
         if (trimmedUsername) {
             const existingUsername = await userRepository_1.userRepository.findByUsername(trimmedUsername);
             if (existingUsername) {
-                const err = new Error(`Username "${trimmedUsername}" is already taken`);
-                err.statusCode = 409;
-                throw err;
+                throw new errorHandler_1.AppError(`Username "${trimmedUsername}" is already taken`, 409);
             }
         }
         // Password policy
         const policyResult = (0, passwordPolicy_1.validatePassword)(password, passwordPolicy_1.defaultPasswordPolicy);
         if (!policyResult.valid) {
-            const err = new Error(policyResult.errors.join('; '));
-            err.statusCode = 400;
-            throw err;
+            throw new errorHandler_1.AppError(policyResult.errors.join('; '), 400);
         }
         // Hash the password (bcrypt) so we never store the plain-text.
         const passwordHash = await userRepository_1.userRepository.hashPassword(password);
@@ -185,7 +230,7 @@ class AuthService {
         });
         await this.emailService.send(message).catch((err) => {
             logger_1.logger.warn('[otp] failed to send registration OTP email:', err);
-            throw new Error('Failed to send OTP email');
+            throw new errorHandler_1.AppError('Failed to send OTP email', 500);
         });
         return {
             sent: true,
@@ -233,9 +278,16 @@ class AuthService {
                 message: `Incorrect verification code. ${remainingAttempts} attempt${remainingAttempts === 1 ? '' : 's'} remaining.`,
             };
         }
-        // OTP matched — atomically: create the user, mark verified, consume pending.
-        const newUserId = await userRepository_1.userRepository.createWithUsername(normalizedEmail, pending.username ?? '', pending.password_hash);
-        await authRepository_1.authRepository.markPendingConsumed(pending.id);
+        // Atomic consume: single UPDATE ... RETURNING prevents TOCTOU where two
+        // concurrent requests with the same OTP could both pass verification
+        // before either marks the pending row as consumed.
+        const consumed = await authRepository_1.authRepository.verifyAndConsumeOtp(pending.id);
+        if (!consumed) {
+            return { success: false, message: 'This verification code has already been used.' };
+        }
+        // OTP matched — atomically: create the user, mark verified. OTP was
+        // already consumed by verifyAndConsumeOtp() above.
+        const newUserId = await userRepository_1.userRepository.createWithUsername(normalizedEmail, await resolveUniqueUsername(pending.username ?? null, userRepository_1.userRepository), pending.password_hash);
         // Audit log: explicitly mark verified (login does not require is_verified
         // checks for these users since they reached this flow).
         await authRepository_1.authRepository.markUserVerified(newUserId);
@@ -252,8 +304,9 @@ class AuthService {
             is_active: created.is_active,
             created_at: created.created_at,
         };
-        const tokens = this.issueTokens(created.id, created.email);
+        // Create session before issuing tokens so the session_id can be bound into the JWT
         const sessionId = await authRepository_1.authRepository.createSession(created.id, deviceInfo ?? null, ipAddress ?? null, null, true);
+        const tokens = this.issueTokens(created.id, created.email, sessionId);
         return {
             success: true,
             message: 'Email verified successfully. Account created.',
@@ -291,7 +344,7 @@ class AuthService {
         });
         await this.emailService.send(message).catch((err) => {
             logger_1.logger.warn('[otp] failed to resend registration OTP email:', err);
-            throw new Error('Failed to send OTP email');
+            throw new errorHandler_1.AppError('Failed to send OTP email', 500);
         });
         return { sent: true, message: `A new verification code has been sent to ${normalizedEmail}.` };
     }
@@ -302,8 +355,7 @@ class AuthService {
         const recentFailedLogin = await authRepository_1.authRepository.getRecentFailureWindow(normalizedEmail);
         const lockout = checkAccountLockout(recentFailedLogin, this.bruteForce.lockoutMinutes);
         if (lockout.locked && lockout.retryInMs !== null) {
-            const err = new Error(`Account temporarily locked. Try again in ${Math.ceil(lockout.retryInMs / 1000)} seconds`);
-            err.statusCode = 429;
+            const err = new errorHandler_1.AppError(`Account temporarily locked. Try again in ${Math.ceil(lockout.retryInMs / 1000)} seconds`, 429);
             err.retryInMs = lockout.retryInMs;
             throw err;
         }
@@ -311,32 +363,28 @@ class AuthService {
         if (!user) {
             await authRepository_1.authRepository.recordLoginAttempt(normalizedEmail, ipAddress ?? 'unknown', deviceInfo ?? null, false);
             await this.recordFailedLoginAndCheckLock(normalizedEmail, ipAddress, deviceInfo ?? null);
-            throw new Error('Invalid email or password');
+            throw new errorHandler_1.AppError('Invalid email or password', 401);
         }
         if (!user.is_active) {
             await authRepository_1.authRepository.recordLoginAttempt(normalizedEmail, ipAddress ?? 'unknown', deviceInfo ?? null, false);
-            const err = new Error('Your account has been disabled. Contact support.');
-            err.statusCode = 403;
-            throw err;
+            throw new errorHandler_1.AppError('Your account has been disabled. Contact support.', 403);
         }
         const valid = await userRepository_1.userRepository.verifyPassword(password, user.password_hash);
         if (!valid) {
             await authRepository_1.authRepository.recordLoginAttempt(normalizedEmail, ipAddress ?? 'unknown', deviceInfo ?? null, false);
             await this.recordFailedLoginAndCheckLock(normalizedEmail, ipAddress, deviceInfo ?? null);
-            throw new Error('Invalid email or password');
+            throw new errorHandler_1.AppError('Invalid email or password', 401);
         }
         if (!user.is_verified) {
-            const err = new Error('Please verify your email before logging in');
-            err.statusCode = 403;
-            throw err;
+            throw new errorHandler_1.AppError('Please verify your email before logging in', 403);
         }
         // Successful login — record it
         await authRepository_1.authRepository.recordLoginAttempt(normalizedEmail, ipAddress ?? 'unknown', deviceInfo ?? null, true);
         await userRepository_1.userRepository.updateLastLogin(user.id);
         // Issue tokens and create session
-        const tokens = this.issueTokens(user.id, user.email);
         const sessionId = await authRepository_1.authRepository.createSession(user.id, deviceInfo ?? null, ipAddress ?? null, null, // userAgent — set by caller
         true);
+        const tokens = this.issueTokens(user.id, user.email, sessionId);
         const publicUser = {
             id: user.id,
             email: user.email,
@@ -358,36 +406,42 @@ class AuthService {
     async recordFailedLoginAndCheckLock(email, ipAddress, _deviceInfo) {
         const recent = await authRepository_1.authRepository.countFailedAttemptsSince(email, this.bruteForce.windowMinutes);
         if (recent >= this.bruteForce.maxAttempts) {
-            const err = new Error(`Too many failed login attempts. Please try again in ${this.bruteForce.lockoutMinutes} minutes.`);
-            err.statusCode = 429;
-            throw err;
+            throw new errorHandler_1.AppError(`Too many failed login attempts. Please try again in ${this.bruteForce.lockoutMinutes} minutes.`, 429);
         }
         void ipAddress; // accepted but not stored by this counter; future-use
     }
     // ── Token refresh (rotation) ──────────────────────────────────────────────
     async refreshTokens(rawRefreshToken, deviceInfo) {
         const tokenHash = (0, safeToken_1.hashToken)(rawRefreshToken);
-        const stored = await authRepository_1.authRepository.findRefreshTokenByHash(tokenHash);
-        if (!stored || stored.revoked) {
-            throw new Error('Invalid or revoked refresh token');
-        }
-        if (new Date(stored.expires_at) < new Date()) {
-            throw new Error('Refresh token expired. Please log in again.');
-        }
-        // Verify the JWT payload
+        // Verify JWT payload first (cheap crypto check, no DB round-trip)
         const payload = (0, jwt_1.verifyRefreshToken)(rawRefreshToken);
         if (!payload) {
-            throw new Error('Invalid refresh token payload');
+            throw new errorHandler_1.AppError('Invalid refresh token payload', 401);
         }
-        // Revoke old token (rotation)
-        await authRepository_1.authRepository.revokeRefreshToken(tokenHash);
+        // Atomic find-and-consume: single UPDATE ... RETURNING query eliminates the
+        // TOCTOU gap where two concurrent requests could both pass validation before
+        // either revoked the token.
+        const consumed = await authRepository_1.authRepository.findAndConsumeRefreshToken(tokenHash);
+        if (!consumed) {
+            // Either: token doesn't exist, was already revoked, or expired.
+            // Treat all cases as potential reuse for security.
+            const userId = payload.id;
+            await authRepository_1.authRepository.revokeAllUserRefreshTokens(userId);
+            await authRepository_1.authRepository.revokeAllUserSessions(userId);
+            const sessions = await authRepository_1.authRepository.getUserSessions(userId);
+            await Promise.all(sessions.map(s => revokeSessionInRedis(s.id)));
+            throw new errorHandler_1.AppError('Refresh token reuse detected — all sessions have been revoked for security', 401);
+        }
         // Verify user still exists and is active
         const user = await userRepository_1.userRepository.findById(payload.id);
         if (!user || !user.is_active) {
-            throw new Error('Account no longer active');
+            throw new errorHandler_1.AppError('Account no longer active', 403);
         }
-        // Issue new pair
-        return this.issueTokens(payload.id, user.email);
+        // Carry the session_id through rotation so the new refresh token stays
+        // bound to the originating device session. This keeps the "active
+        // sessions" list accurate and ensures revocation by session_id works.
+        const sessionId = consumed.session_id ?? undefined;
+        return this.issueTokens(payload.id, user.email, sessionId);
     }
     // ── Logout ────────────────────────────────────────────────────────────────
     async logoutCurrentDevice(refreshToken) {
@@ -397,6 +451,9 @@ class AuthService {
     async logoutAllDevices(userId) {
         const revokedTokens = await authRepository_1.authRepository.revokeAllUserRefreshTokens(userId);
         const revokedSessions = await authRepository_1.authRepository.revokeAllUserSessions(userId);
+        // Propagate session revocation to Redis for immediate enforcement
+        const sessions = await authRepository_1.authRepository.getUserSessions(userId);
+        await Promise.all(sessions.map(s => revokeSessionInRedis(s.id)));
         return { revokedTokens, revokedSessions };
     }
     // ── Sessions ──────────────────────────────────────────────────────────────
@@ -405,6 +462,7 @@ class AuthService {
     }
     async revokeSession(sessionId) {
         await authRepository_1.authRepository.revokeSession(sessionId);
+        await revokeSessionInRedis(sessionId);
     }
     // ── Verification ──────────────────────────────────────────────────────────
     async verifyEmail(rawToken) {
@@ -487,9 +545,7 @@ class AuthService {
         // Password policy
         const policyResult = (0, passwordPolicy_1.validatePassword)(newPassword, passwordPolicy_1.defaultPasswordPolicy);
         if (!policyResult.valid) {
-            const err = new Error(policyResult.errors.join('; '));
-            err.statusCode = 400;
-            throw err;
+            throw new errorHandler_1.AppError(policyResult.errors.join('; '), 400);
         }
         // Hash new password and update
         const newHash = await userRepository_1.userRepository.hashPassword(newPassword);
@@ -507,13 +563,11 @@ class AuthService {
             throw new Error('User not found');
         const valid = await userRepository_1.userRepository.verifyPassword(currentPassword, user.password_hash);
         if (!valid) {
-            throw new Error('Current password is incorrect');
+            throw new errorHandler_1.AppError('Current password is incorrect', 400);
         }
         const policyResult = (0, passwordPolicy_1.validatePassword)(newPassword, passwordPolicy_1.defaultPasswordPolicy);
         if (!policyResult.valid) {
-            const err = new Error(policyResult.errors.join('; '));
-            err.statusCode = 400;
-            throw err;
+            throw new errorHandler_1.AppError(policyResult.errors.join('; '), 400);
         }
         const newHash = await userRepository_1.userRepository.hashPassword(newPassword);
         await (0, pool_1.getPool)().query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, userId]);
@@ -521,14 +575,14 @@ class AuthService {
         await this.logoutAllDevices(userId);
     }
     // ── Helpers ───────────────────────────────────────────────────────────────
-    issueTokens(userId, email) {
-        const accessToken = (0, jwt_1.generateAccessToken)(userId, email);
+    issueTokens(userId, email, sessionId) {
+        const accessToken = (0, jwt_1.generateAccessToken)(userId, email, sessionId);
         const refreshToken = (0, jwt_1.generateRefreshToken)(userId, email);
         const expiresIn = config_1.config.jwt.expiresIn;
         // Persist refresh token hash (async — don't block token issuance)
         const tokenHash = (0, safeToken_1.hashToken)(refreshToken);
         const tokenExpiry = new Date(Date.now() + 30 * 24 * 3600000).toISOString();
-        authRepository_1.authRepository.createRefreshToken(userId, tokenHash, null, null, tokenExpiry).catch((err) => logger_1.logger.warn('Failed to persist refresh token:', err));
+        authRepository_1.authRepository.createRefreshToken(userId, tokenHash, sessionId ?? null, null, null, tokenExpiry).catch((err) => logger_1.logger.warn('Failed to persist refresh token:', err));
         return { accessToken, refreshToken, expiresIn };
     }
 }
