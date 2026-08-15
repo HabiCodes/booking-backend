@@ -45,6 +45,9 @@ const authRepository_1 = require("./repositories/authRepository");
 (0, envValidation_1.assertValidEnvOrExit)();
 const app = (0, express_1.default)();
 exports.app = app;
+// Trust Render's proxy so rate-limit and IP-based middleware see the
+// real client address from X-Forwarded-For instead of the internal proxy IP.
+app.set('trust proxy', 1);
 const server = (0, http_1.createServer)(app);
 exports.server = server;
 // Security

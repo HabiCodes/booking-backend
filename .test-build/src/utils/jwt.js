@@ -14,6 +14,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.generateAccessToken = generateAccessToken;
 exports.generateRefreshToken = generateRefreshToken;
 exports.generateAdminAccessToken = generateAdminAccessToken;
+exports.generateOrganizerAccessToken = generateOrganizerAccessToken;
 exports.verifyAccessToken = verifyAccessToken;
 exports.verifyRefreshToken = verifyRefreshToken;
 exports.verifyAdminAccessToken = verifyAdminAccessToken;
@@ -58,6 +59,22 @@ function generateAdminAccessToken(adminId, email, role, permissions, permissions
     }
     return jsonwebtoken_1.default.sign(payload, config_1.config.jwt.adminSecret, {
         expiresIn: (config_1.config.jwt.adminExpiresIn ?? '12h'),
+    });
+}
+function generateOrganizerAccessToken(userId, email, name, role, organizationId, permissions) {
+    const payload = {
+        id: userId,
+        sub: email,
+        typ: 'organizer_access',
+        name,
+        role,
+        permissions: permissions || {},
+    };
+    if (typeof organizationId === 'number') {
+        payload.organization_id = organizationId;
+    }
+    return jsonwebtoken_1.default.sign(payload, config_1.config.jwt.organizerSecret, {
+        expiresIn: (config_1.config.jwt.organizerExpiresIn ?? '8h'),
     });
 }
 function verifyAccessToken(token) {

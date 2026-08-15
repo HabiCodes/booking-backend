@@ -31,24 +31,26 @@ async function verifyOrganizerIsActive(userId) {
 async function organizerAuthMiddleware(req, _res, next) {
     const header = req.headers.authorization;
     if (!header || !header.startsWith('Bearer ')) {
-        throw new errorHandler_1.AppError('Unauthorized — organizer token required', 401);
+        return next(new errorHandler_1.AppError('Unauthorized — organizer token required', 401));
     }
     const token = header.split(' ')[1];
     try {
         const payload = (0, jwt_1.verifyOrganizerAccessToken)(token);
         if (!payload) {
-            throw new errorHandler_1.AppError('Invalid organizer token structure', 401);
+            return next(new errorHandler_1.AppError('Invalid organizer token structure', 401));
         }
         // Verify organizer user is still active
         const isActive = await verifyOrganizerIsActive(payload.id);
         if (!isActive) {
-            throw new errorHandler_1.AppError('Organizer account has been deactivated', 401);
+            return next(new errorHandler_1.AppError('Organizer account has been deactivated', 401));
         }
         req.organizerUser = payload;
         next();
     }
     catch {
-        throw new errorHandler_1.AppError('Invalid or expired organizer token', 401);
+        // Catches: verifyOrganizerAccessToken returning null, verifyOrganizerIsActive
+        // rejecting, or any unexpected error — all route to 401 to avoid leaking internals.
+        next(new errorHandler_1.AppError('Invalid or expired organizer token', 401));
     }
 }
 /**

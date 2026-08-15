@@ -93,31 +93,36 @@ export async function adminAuthMiddleware(
 ): Promise<void> {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
-    throw new AppError('Unauthorized', 401);
+    return next(new AppError('Unauthorized', 401));
   }
 
   const token = header.split(' ')[1];
+
   try {
     const decoded = verifyAdminAccessToken(token);
     if (!decoded) {
-      throw new AppError('Invalid admin token structure', 401);
+      return next(new AppError('Invalid admin token structure', 401));
     }
 
     // Verify admin account is still active
     const isActive = await verifyAdminIsActive(decoded.id);
     if (!isActive) {
-      throw new AppError('Admin account has been deactivated', 401);
+      return next(new AppError('Admin account has been deactivated', 401));
     }
 
     // Verify permissions are fresh (P1-2)
     const permissionsFresh = await verifyPermissionsFreshness(decoded.id, decoded.permissionsUpdatedAt);
     if (!permissionsFresh) {
-      throw new AppError('Permissions have been updated — please re-authenticate', 401);
+      return next(new AppError('Permissions have been updated — please re-authenticate', 401));
     }
 
     req.admin = decoded;
     next();
   } catch {
-    throw new AppError('Invalid or expired admin token', 401);
+    // Catches:
+    //  - verifyAdminAccessToken() returning null/undefined (not AppError)
+    //  - verifyAdminIsActive / verifyPermissionsFreshness rejecting (DB failure → 401, not 500)
+    //  - Any other unexpected error → 401 to avoid leaking internals
+    next(new AppError('Invalid or expired admin token', 401));
   }
 }

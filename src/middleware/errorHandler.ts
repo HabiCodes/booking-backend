@@ -33,6 +33,7 @@ export function errorHandler(
 
   res.status(statusCode).json({
     success: false,
+    error: message,
     message,
     ...(config.nodeEnv === 'development' && { stack: err.stack }),
     ...(err instanceof AppError && err.retryInMs != null && { retryInMs: err.retryInMs }),

@@ -24,6 +24,7 @@ function errorHandler(err, req, res, _next) {
     }
     res.status(statusCode).json({
         success: false,
+        error: message,
         message,
         ...(config_1.config.nodeEnv === 'development' && { stack: err.stack }),
         ...(err instanceof AppError && err.retryInMs != null && { retryInMs: err.retryInMs }),

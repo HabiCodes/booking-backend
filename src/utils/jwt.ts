@@ -70,6 +70,34 @@ export function generateAdminAccessToken(
   );
 }
 
+export function generateOrganizerAccessToken(
+  userId: number,
+  email: string,
+  name: string,
+  role: 'owner' | 'manager',
+  organizationId?: number,
+  permissions?: Record<string, boolean>
+): string {
+  const payload: Record<string, unknown> = {
+    id: userId,
+    sub: email,
+    typ: 'organizer_access',
+    name,
+    role,
+    permissions: permissions || {},
+  };
+  if (typeof organizationId === 'number') {
+    payload.organization_id = organizationId;
+  }
+  return jwt.sign(
+    payload,
+    config.jwt.organizerSecret,
+    {
+      expiresIn: (config.jwt.organizerExpiresIn ?? '8h') as SignOptions['expiresIn'],
+    }
+  );
+}
+
 export function verifyAccessToken(token: string): AccessTokenPayload | null {
   try {
     const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;

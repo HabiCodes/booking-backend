@@ -57,11 +57,11 @@ async function isSessionValid(sessionId) {
     }
 }
 async function authMiddleware(req, _res, next) {
-    const header = req.headers.authorization;
-    if (!header || !header.startsWith('Bearer ')) {
-        throw new errorHandler_1.AppError('Unauthorized', 401);
-    }
     try {
+        const header = req.headers.authorization;
+        if (!header || !header.startsWith('Bearer ')) {
+            throw new errorHandler_1.AppError('Unauthorized', 401);
+        }
         const token = header.split(' ')[1];
         const decoded = (0, jwt_1.verifyAccessToken)(token);
         if (!decoded) {
@@ -78,9 +78,7 @@ async function authMiddleware(req, _res, next) {
         next();
     }
     catch (err) {
-        if (err instanceof errorHandler_1.AppError)
-            throw err;
-        throw new errorHandler_1.AppError('Invalid or expired token', 401);
+        next(err instanceof errorHandler_1.AppError ? err : new errorHandler_1.AppError('Invalid or expired token', 401));
     }
 }
 async function optionalAuth(req, _res, next) {

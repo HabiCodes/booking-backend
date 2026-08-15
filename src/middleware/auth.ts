@@ -64,12 +64,12 @@ export async function authMiddleware(
   _res: Response,
   next: NextFunction
 ): Promise<void> {
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith('Bearer ')) {
-    throw new AppError('Unauthorized', 401);
-  }
-
   try {
+    const header = req.headers.authorization;
+    if (!header || !header.startsWith('Bearer ')) {
+      throw new AppError('Unauthorized', 401);
+    }
+
     const token = header.split(' ')[1];
     const decoded = verifyAccessToken(token);
     if (!decoded) {
@@ -87,8 +87,7 @@ export async function authMiddleware(
     req.user = { id: decoded.id, email: decoded.email };
     next();
   } catch (err) {
-    if (err instanceof AppError) throw err;
-    throw new AppError('Invalid or expired token', 401);
+    next(err instanceof AppError ? err : new AppError('Invalid or expired token', 401));
   }
 }
 

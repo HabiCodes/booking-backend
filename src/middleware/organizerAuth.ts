@@ -49,9 +49,8 @@ export async function organizerAuthMiddleware(
   next: NextFunction
 ): Promise<void> {
   const header = req.headers.authorization;
-
   if (!header || !header.startsWith('Bearer ')) {
-    throw new AppError('Unauthorized — organizer token required', 401);
+    return next(new AppError('Unauthorized — organizer token required', 401));
   }
 
   const token = header.split(' ')[1];
@@ -59,19 +58,21 @@ export async function organizerAuthMiddleware(
   try {
     const payload = verifyOrganizerAccessToken(token);
     if (!payload) {
-      throw new AppError('Invalid organizer token structure', 401);
+      return next(new AppError('Invalid organizer token structure', 401));
     }
 
     // Verify organizer user is still active
     const isActive = await verifyOrganizerIsActive(payload.id);
     if (!isActive) {
-      throw new AppError('Organizer account has been deactivated', 401);
+      return next(new AppError('Organizer account has been deactivated', 401));
     }
 
     req.organizerUser = payload;
     next();
   } catch {
-    throw new AppError('Invalid or expired organizer token', 401);
+    // Catches: verifyOrganizerAccessToken returning null, verifyOrganizerIsActive
+    // rejecting, or any unexpected error — all route to 401 to avoid leaking internals.
+    next(new AppError('Invalid or expired organizer token', 401));
   }
 }
 
