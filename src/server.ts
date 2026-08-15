@@ -44,6 +44,11 @@ import { authRepository } from './repositories/authRepository';
 assertValidEnvOrExit();
 
 const app = express();
+
+// Trust Render's proxy so rate-limit and IP-based middleware see the
+// real client address from X-Forwarded-For instead of the internal proxy IP.
+app.set('trust proxy', 1);
+
 const server = createServer(app);
 
 // Security
