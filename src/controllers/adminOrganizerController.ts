@@ -189,19 +189,20 @@ export async function createManager(req: AdminRequest, res: Response, next: Next
     if (!organization_id || !email || !name) {
       throw new AppError('organization_id, email, and name are required', 400);
     }
+    const tempPassword = generateTempPassword();
 
     const user = await organizerUserRepository.create({
       organization_id,
       email,
       name,
       phone: phone ?? null,
-      password: generateTempPassword(),
-      role: role || 'manager',
+      password: tempPassword,
+      role: role || 'manager',  
       permissions: permissions || {},
     });
 
     const { password_hash: _, ...safe } = user as unknown as Record<string, unknown>;
-    res.status(201).json({ success: true, data: safe, temp_password: generateTempPassword() });
+    res.status(201).json({ success: true, data: safe, temp_password: tempPassword });
   } catch (err) {
     next(err);
   }
