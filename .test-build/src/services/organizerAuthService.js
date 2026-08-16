@@ -33,7 +33,7 @@ class OrganizerAuthService {
     }
     async issueTokens(user) {
         const payload = {
-            id: user.id,
+            id: Number(user.id),
             sub: user.email,
             organization_id: Number(user.organization_id),
             name: user.name,

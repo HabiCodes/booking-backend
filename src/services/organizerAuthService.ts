@@ -60,7 +60,7 @@ export class OrganizerAuthService {
 
   async issueTokens(user: OrganizerUserRow): Promise<OrganizerAuthResult> {
     const payload: Record<string, unknown> = {
-      id: user.id,
+      id: Number(user.id),
       sub: user.email,
       organization_id: Number(user.organization_id),
       name: user.name,
