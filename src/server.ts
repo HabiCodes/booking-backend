@@ -135,6 +135,10 @@ apiV1.use('/admin', adminProtectedRoutes);
 apiV1.use('/promotions', promotionPublicRoutes);
 apiV1.use('/promotions/organizer', promotionOrganizerRoutes);
 apiV1.use('/promotions/admin', promotionAdminRoutes);
+apiV1.use('/organizer/auth', organizerAuthRoutes);
+apiV1.use('/organizer/events', organizerEventRoutes);
+apiV1.use('/organizer/organizations', organizerOrganizationRoutes);
+apiV1.use('/organizer/applications', organizerApplicationRoutes);
 
 app.use('/api/v1', apiV1);
 

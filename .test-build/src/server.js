@@ -122,6 +122,10 @@ apiV1.use('/admin', adminProtectedRoutes_1.default);
 apiV1.use('/promotions', promotionRoutes_1.promotionPublicRoutes);
 apiV1.use('/promotions/organizer', promotionRoutes_1.promotionOrganizerRoutes);
 apiV1.use('/promotions/admin', promotionRoutes_1.promotionAdminRoutes);
+apiV1.use('/organizer/auth', organizerAuthRoutes_1.default);
+apiV1.use('/organizer/events', organizerEventRoutes_1.default);
+apiV1.use('/organizer/organizations', organizerOrganizationRoutes_1.default);
+apiV1.use('/organizer/applications', organizerApplicationRoutes_1.organizerApplicationRoutes);
 app.use('/api/v1', apiV1);
 // ── Legacy /api routes (backward compatibility) ───────────────────────────────
 app.use('/api/auth', authLimiter, authRoutes_1.default);
