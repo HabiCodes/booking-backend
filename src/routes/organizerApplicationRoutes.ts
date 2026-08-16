@@ -24,12 +24,12 @@ const applicationSubmitLimiter = rateLimiter({
  * Submit a new organizer application.
  * Body: { legal_name, display_name, email, listing_category, ...optional_fields }
  */
-router.post('/applications', applicationSubmitLimiter, submitOrganizerApplication);
+router.post('/', applicationSubmitLimiter, submitOrganizerApplication);
 
 /**
  * GET /organizer/applications/status?email=<email>
  * Check the status of an existing application.
  */
-router.get('/applications/status', getApplicationStatus);
+router.get('/status', getApplicationStatus);
 
 export { router as organizerApplicationRoutes };
