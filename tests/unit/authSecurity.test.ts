@@ -8,6 +8,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import jwt from 'jsonwebtoken';
 
+import { config } from '../../src/config';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -121,6 +122,26 @@ describe('access token session binding', () => {
     const token = generateAccessToken(42, 'user@test.com', 99);
     const decoded = verifyAccessToken(token);
     assert.equal(decoded?.session_id, 99);
+  });
+
+  // Phase 3 regression: pg BIGINT returns IDs as strings — verifier must reject them
+  it('rejects token with string id (simulates pg BIGINT without Number() coercion)', () => {
+    // Manually craft a token with string id — exactly what pg BIGINT produces without Number()
+    const badToken = jwt.sign(
+      { id: '10', sub: 'user@test.com', typ: 'access' },
+      config.jwt.secret,
+      { expiresIn: '15m' }
+    );
+    const decoded = verifyAccessToken(badToken);
+    assert.equal(decoded, null, 'Token with string id (pg BIGINT) must be rejected');
+  });
+
+  it('accepts token with numeric id (after Number() coercion in authService)', () => {
+    // Token created with numeric id — what Number(user.id) produces
+    const goodToken = generateAccessToken(10, 'user@test.com');
+    const decoded = verifyAccessToken(goodToken);
+    assert.ok(decoded, 'Token with numeric id must be accepted');
+    assert.equal(decoded.id, 10);
   });
 });
 

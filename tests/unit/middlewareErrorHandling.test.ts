@@ -24,7 +24,7 @@ import { AppError, errorHandler } from '../../src/middleware/errorHandler';
 import { authMiddleware, optionalAuth, AuthRequest } from '../../src/middleware/auth';
 import { adminAuthMiddleware } from '../../src/middleware/adminAuth';
 import { organizerAuthMiddleware, OrganizerRequest } from '../../src/middleware/organizerAuth';
-import { generateAccessToken, generateAdminAccessToken, generateOrganizerAccessToken } from '../../src/utils/jwt';
+import { generateAccessToken, generateRefreshToken, generateAdminAccessToken, generateOrganizerAccessToken } from '../../src/utils/jwt';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PART 1: Unit tests — direct middleware function calls
@@ -165,6 +165,42 @@ describe('authMiddleware — Express 4 async error propagation', () => {
     assert.strictEqual(lastNextCalls[0], 'next()');
     assert.strictEqual((req as AuthRequest).user?.id, 5);
     assert.strictEqual((req as AuthRequest).user?.email, 'session@example.com');
+  });
+
+  // Phase 3 regression: pg BIGINT returns IDs as strings — must reject un-coerced tokens
+  it('rejects token with string id (simulates pg BIGINT without Number() coercion)', async () => {
+    resetMockState();
+    const secret = process.env.JWT_SECRET || 'test-secret';
+    // Manually craft a token with string id — exactly what pg BIGINT produces without Number()
+    const badToken = jwt.sign(
+      { id: '10', sub: 'user@test.com', typ: 'access' },
+      secret,
+      { expiresIn: '15m' }
+    );
+    const req = mockReq({ headers: { authorization: `Bearer ${badToken}` } });
+    const res = mockRes();
+    const next = mockNext();
+
+    await callMiddleware(authMiddleware, req, res, next);
+
+    assert.strictEqual(lastNextCalls.length, 1, 'Should call next with error');
+    assert.ok(lastNextErr instanceof AppError, 'Should produce AppError');
+    assert.strictEqual((lastNextErr as AppError).statusCode, 401);
+  });
+
+  it('accepts token with numeric id (after Number() coercion in authService)', async () => {
+    resetMockState();
+    // Token created with numeric id — what Number(user.id) produces
+    const token = generateAccessToken(10, 'user@test.com');
+    const req = mockReq({ headers: { authorization: `Bearer ${token}` } });
+    const res = mockRes();
+    const next = mockNext();
+
+    await callMiddleware(authMiddleware, req, res, next);
+
+    assert.strictEqual(lastNextCalls.length, 1);
+    assert.strictEqual(lastNextCalls[0], 'next()');
+    assert.strictEqual((req as AuthRequest).user?.id, 10);
   });
 
   it('H. subsequent requests work after an auth failure (no process crash)', async () => {
@@ -548,6 +584,49 @@ describe('HTTP — user auth endpoints', () => {
     });
     assert.strictEqual(status, 200);
     assert.deepStrictEqual(body, { user: 'protected' });
+  });
+
+  // Phase 3 regression: string id (pg BIGINT) → 401
+  it('GET /api/v1/me returns 401 with token containing string id (pg BIGINT bug)', async () => {
+    const secret = process.env.JWT_SECRET || 'test-secret';
+    const badToken = jwt.sign(
+      { id: '10', sub: 'user@test.com', typ: 'access' },
+      secret,
+      { expiresIn: '15m' }
+    );
+    const { status, body } = await makeRequest('GET', '/api/v1/me', {
+      headers: { Authorization: `Bearer ${badToken}` },
+    });
+    assert.strictEqual(status, 401);
+    assert.ok(body.error?.includes('Invalid or expired token'), `Expected token error, got: ${body.error}`);
+  });
+
+  // Refresh tokens must NOT work as access tokens on the user endpoint
+  it('GET /api/v1/me returns 401 with refresh token instead of access token', async () => {
+    const refreshToken = generateRefreshToken(1, 'test@example.com');
+    const { status, body } = await makeRequest('GET', '/api/v1/me', {
+      headers: { Authorization: `Bearer ${refreshToken}` },
+    });
+    assert.strictEqual(status, 401);
+    assert.ok(body.error?.includes('Invalid or expired token'), `Expected token error, got: ${body.error}`);
+  });
+
+  // Admin tokens must not access normal-user routes
+  it('GET /api/v1/me returns 401 with admin token', async () => {
+    const token = generateAdminAccessToken(1, 'admin@example.com', 'super_admin', { can_manage_events: true });
+    const { status, body } = await makeRequest('GET', '/api/v1/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.strictEqual(status, 401);
+  });
+
+  // Organizer tokens must not access normal-user routes
+  it('GET /api/v1/me returns 401 with organizer token', async () => {
+    const token = generateOrganizerAccessToken(3, 'org@example.com', 'Test Org', 'owner', 1);
+    const { status, body } = await makeRequest('GET', '/api/v1/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.strictEqual(status, 401);
   });
 });
 

@@ -566,7 +566,7 @@ export class AuthService {
       null, // userAgent — set by caller
       true
     );
-    const tokens = this.issueTokens(user.id, user.email, sessionId);
+    const tokens = this.issueTokens(Number(user.id), user.email, sessionId);
 
     const publicUser: UserPublic = {
       id: user.id,
