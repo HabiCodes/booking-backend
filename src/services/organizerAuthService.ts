@@ -62,7 +62,7 @@ export class OrganizerAuthService {
     const payload: Record<string, unknown> = {
       id: user.id,
       sub: user.email,
-      organization_id: user.organization_id,
+      organization_id: Number(user.organization_id),
       name: user.name,
       role: user.role,
       permissions: (user.permissions as Record<string, boolean>) || {},

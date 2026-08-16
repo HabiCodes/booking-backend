@@ -386,6 +386,39 @@ describe('organizerAuthMiddleware — Express 4 async error propagation', () => 
   });
 });
 
+import jwt from 'jsonwebtoken';
+
+// ── H. Organizer token — pg BIGINT organization_id coercion (regression test) ───
+describe('organizerAuthMiddleware — BIGINT organization_id coercion', () => {
+  it('rejects a token with string organization_id (pre-fix pg behavior)', async () => {
+    resetMockState();
+    const payload = { id: 2, sub: 'owner@test.com', organization_id: '2', name: 'Owner', role: 'owner', permissions: {}, typ: 'organizer_access' };
+    const badToken = jwt.sign(payload, process.env.ORGANIZER_JWT_SECRET || 'change-me-organizer-secret');
+    const req = mockReq({ headers: { authorization: `Bearer ${badToken}` } });
+    const res = mockRes();
+    const next = mockNext();
+    await callMiddleware(organizerAuthMiddleware, req, res, next);
+    assert.strictEqual(lastNextCalls.length, 1);
+    assert.ok(lastNextErr instanceof AppError);
+    assert.strictEqual((lastNextErr as AppError).statusCode, 401);
+    assert.ok((lastNextErr as AppError).message.includes('Invalid organizer token structure'));
+  });
+
+  it('accepts a token with numeric organization_id (post-fix behavior)', async () => {
+    resetMockState();
+    const payload = { id: 2, sub: 'owner@test.com', organization_id: 2, name: 'Owner', role: 'owner', permissions: {}, typ: 'organizer_access' };
+    const goodToken = jwt.sign(payload, process.env.ORGANIZER_JWT_SECRET || 'change-me-organizer-secret');
+    const req = mockReq({ headers: { authorization: `Bearer ${goodToken}` } });
+    const res = mockRes();
+    const next = mockNext();
+    await callMiddleware(organizerAuthMiddleware, req, res, next);
+    assert.strictEqual(lastNextCalls[0], 'next()');
+    assert.strictEqual(lastNextErr, null);
+    assert.strictEqual((req as OrganizerRequest).organizerUser?.id, 2);
+    assert.strictEqual((req as OrganizerRequest).organizerUser?.organizationId, 2);
+  });
+});
+
 // ── G. Unexpected errors reach the global error handler ────────────────────────
 
 describe('unexpected errors reach global error handler', () => {

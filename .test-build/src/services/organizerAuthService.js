@@ -35,7 +35,7 @@ class OrganizerAuthService {
         const payload = {
             id: user.id,
             sub: user.email,
-            organization_id: user.organization_id,
+            organization_id: Number(user.organization_id),
             name: user.name,
             role: user.role,
             permissions: user.permissions || {},
