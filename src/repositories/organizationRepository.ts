@@ -7,7 +7,7 @@ import type { OrganizationRow, OrganizationPublic, OrganizationUpdateInput, Orga
 
 export class OrganizationRepository {
   async findById(id: number): Promise<OrganizationRow | null> {
-    const { rows } = await getPool().query('SELECT * FROM organizations WHERE id = $1 AND deleted_at IS NULL LIMIT 1', [id]);
+    const { rows } = await getPool().query('SELECT * FROM organizations WHERE id = $1 LIMIT 1', [id]);
     return (rows as unknown as OrganizationRow[])[0] || null;
   }
 
