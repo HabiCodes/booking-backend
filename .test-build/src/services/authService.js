@@ -352,12 +352,15 @@ class AuthService {
     async login(email, password, deviceInfo, ipAddress) {
         const normalizedEmail = email.toLowerCase().trim();
         // Brute-force: check lockout (uses both email and IP address)
-        const recentFailedLogin = await authRepository_1.authRepository.getRecentFailureWindow(normalizedEmail);
-        const lockout = checkAccountLockout(recentFailedLogin, this.bruteForce.lockoutMinutes);
-        if (lockout.locked && lockout.retryInMs !== null) {
-            const err = new errorHandler_1.AppError(`Account temporarily locked. Try again in ${Math.ceil(lockout.retryInMs / 1000)} seconds`, 429);
-            err.retryInMs = lockout.retryInMs;
-            throw err;
+        const recentFailedCount = await authRepository_1.authRepository.countFailedAttemptsSince(normalizedEmail, this.bruteForce.windowMinutes);
+        if (recentFailedCount >= this.bruteForce.maxAttempts) {
+            const recentFailedLogin = await authRepository_1.authRepository.getRecentFailureWindow(normalizedEmail);
+            const lockout = checkAccountLockout(recentFailedLogin, this.bruteForce.lockoutMinutes);
+            if (lockout.locked && lockout.retryInMs !== null) {
+                const err = new errorHandler_1.AppError(`Account temporarily locked. Try again in ${Math.ceil(lockout.retryInMs / 1000)} seconds`, 429);
+                err.retryInMs = lockout.retryInMs;
+                throw err;
+            }
         }
         const user = await userRepository_1.userRepository.findByEmail(normalizedEmail);
         if (!user) {

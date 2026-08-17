@@ -338,17 +338,20 @@ function intervalsOverlap(aStart, aEnd, bStart, bEnd) {
     // ── IST timezone display regression tests ────────────────────────────────────
     // The DB stores timestamps in UTC. getCustomerAvailability must display
     // times in IST (Asia/Kolkata = UTC+5:30) for the end-user, not in UTC.
-    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // 5h30m in milliseconds
+    // Using Intl.DateTimeFormat('Asia/Kolkata') makes this host-independent.
     function formatTimeIST(utcIso) {
         const d = new Date(utcIso);
-        const ist = new Date(d.getTime() + IST_OFFSET_MS);
-        // Use UTC accessors because the shifted Date is treated as UTC midnight
-        // and getHours()/getMinutes() return local host time.
-        const hours = ist.getUTCHours();
-        const minutes = ist.getUTCMinutes();
-        const h12 = hours % 12 || 12;
-        const ampm = hours < 12 ? 'AM' : 'PM';
-        return `${h12}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Kolkata',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+        });
+        const parts = formatter.formatToParts(d);
+        const hour = parseInt(parts.find((p) => p.type === 'hour').value, 10);
+        const minute = parts.find((p) => p.type === 'minute').value;
+        const dayPeriod = parts.find((p) => p.type === 'dayPeriod').value;
+        return `${hour}:${minute} ${dayPeriod}`;
     }
     (0, node_test_1.it)('6 AM IST slot (stored as 00:30 UTC) displays as "6:00 AM" not "12:30 AM"', () => {
         // A 6:00 AM IST booking is stored as 00:30 UTC in the database.
@@ -370,6 +373,25 @@ function intervalsOverlap(aStart, aEnd, bStart, bEnd) {
     });
     (0, node_test_1.it)('2:30 PM IST (stored as 09:00 UTC) displays as "2:30 PM"', () => {
         node_assert_1.default.strictEqual(formatTimeIST('2026-08-15T09:00:00.000Z'), '2:30 PM');
+    });
+    (0, node_test_1.it)('IST display is host-timezone independent (does not depend on process.env.TZ)', () => {
+        // The formatting logic MUST produce identical output regardless of the
+        // server's local timezone. AWS / Render / Docker hosts may run any TZ;
+        // we cannot rely on the OS clock. Intl.DateTimeFormat('Asia/Kolkata')
+        // resolves the instant at the target zone without consulting the host TZ.
+        const probe = '2026-08-15T03:30:00.000Z'; // 09:00 IST
+        const expected = '9:00 AM';
+        // Baseline (whatever the test runner's TZ is)
+        const baseline = formatTimeIST(probe);
+        node_assert_1.default.strictEqual(baseline, expected);
+        // Try a few representative host TZs — Intl output MUST be identical.
+        // These processes must complete in the same Node.js test process.
+        const child = require('child_process');
+        const tzs = ['UTC', 'America/New_York', 'Europe/London', 'Asia/Tokyo'];
+        for (const tz of tzs) {
+            const out = child.execSync(`node -e "const f=(utc)=>{const d=new Date(utc);const fmt=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Kolkata',hour:'numeric',minute:'2-digit',hour12:true});const p=fmt.formatToParts(d);return p.find(x=>x.type==='hour').value+':'+p.find(x=>x.type==='minute').value+' '+p.find(x=>x.type==='dayPeriod').value};console.log(f('${probe}'));"`, { env: { ...process.env, TZ: tz }, encoding: 'utf8' }).trim();
+            node_assert_1.default.strictEqual(out, expected, `TZ=${tz} produced wrong IST display: ${out}`);
+        }
     });
     (0, node_test_1.it)('computes duration_minutes correctly', () => {
         const start = new Date('2026-08-15T10:00:00.000Z');

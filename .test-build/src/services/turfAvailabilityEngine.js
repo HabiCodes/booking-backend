@@ -787,15 +787,19 @@ class AvailabilityEngine {
             const end = new Date(slot.endsAt);
             const durationMs = end.getTime() - start.getTime();
             const durationMinutes = Math.max(1, Math.round(durationMs / 60000));
-            // Format time for display in IST (Asia/Kolkata = UTC+5:30)
-            const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+            // Format time for display using Asia/Kolkata — host-independent
             const formatTime = (d) => {
-                const ist = new Date(d.getTime() + IST_OFFSET_MS);
-                const hours = ist.getHours();
-                const minutes = ist.getMinutes();
-                const h12 = hours % 12 || 12;
-                const ampm = hours < 12 ? 'AM' : 'PM';
-                return `${h12}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+                const formatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'Asia/Kolkata',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true,
+                });
+                const parts = formatter.formatToParts(d);
+                const hour = parseInt(parts.find((p) => p.type === 'hour').value, 10);
+                const minute = parts.find((p) => p.type === 'minute').value;
+                const dayPeriod = parts.find((p) => p.type === 'dayPeriod').value;
+                return `${hour}:${minute} ${dayPeriod}`;
             };
             const formattedTime = `${formatTime(start)} – ${formatTime(end)}`;
             return {

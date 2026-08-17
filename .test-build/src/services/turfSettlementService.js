@@ -1,6 +1,13 @@
 "use strict";
 /**
  * Turf settlement service — payout tracking for turf organizations.
+ *
+ * Single source of truth for all financial rates:
+ *   - Commission rate: organizations.commission_rate (overridable per-org)
+ *   - TDS rate, platform fee, GST: financial_configs table (via FinancialConfigService)
+ *
+ * Arithmetic is delegated to FinancialCalculator which works in integer paise
+ * to avoid floating-point drift.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.turfSettlementService = exports.TurfSettlementService = void 0;
@@ -8,6 +15,10 @@ const turfBookingRepository_1 = require("../repositories/turfBookingRepository")
 const turfSettlementRepository_1 = require("../repositories/turfSettlementRepository");
 const logger_1 = require("../utils/logger");
 const pool_1 = require("../db/pool");
+const financialConfigService_1 = require("./financialConfigService");
+const financialCalculator_1 = require("./financialCalculator");
+// Conversion: percent (e.g. 10 for 10%) → basis points.
+const percentToBps = (percent) => Math.round(percent * 100);
 class TurfSettlementService {
     async createSettlementForBooking(bookingId) {
         const booking = await turfBookingRepository_1.turfBookingRepository.findById(bookingId);
@@ -17,10 +28,27 @@ class TurfSettlementService {
         if (existing)
             return;
         const grossAmount = parseFloat(booking.amount);
-        const commissionRate = 10;
-        const commissionAmount = Math.round((grossAmount * commissionRate) / 100 * 100) / 100;
-        const tdsAmount = Math.round((grossAmount * 1) / 100 * 100) / 100;
-        const netAmount = Math.round((grossAmount - commissionAmount - tdsAmount) * 100) / 100;
+        const grossAmountPaise = (0, financialCalculator_1.rupeesToPaise)(grossAmount);
+        // Resolve commission and TDS from the single source of truth.
+        const orgCommissionResult = await (0, pool_1.getPool)().query('SELECT commission_rate FROM organizations WHERE id = $1', [booking.organization_id]);
+        const orgCommissionPercent = parseFloat(orgCommissionResult.rows[0]?.commission_rate ?? '10');
+        const orgCommissionBps = percentToBps(orgCommissionPercent);
+        const configSnapshot = await financialConfigService_1.financialConfigService.getSnapshot(booking.organization_id);
+        // Compose a snapshot that respects org-level commission while pulling TDS/other rates
+        // from the financial_configs table.
+        const composedConfig = {
+            ...configSnapshot,
+            commission_bps: orgCommissionBps,
+        };
+        const breakdown = (0, financialCalculator_1.calculateBookingFinancials)({
+            gross_amount_paise: grossAmountPaise,
+            config: composedConfig,
+        });
+        // Convert paise back to the existing rupees-with-2dp convention that the
+        // turf_settlement_items columns expect (preserves DB contract + rounding).
+        const commissionAmount = parseFloat((0, financialCalculator_1.paiseToRupees)(breakdown.commission_paise));
+        const tdsAmount = parseFloat((0, financialCalculator_1.paiseToRupees)(breakdown.tds_paise));
+        const netAmount = parseFloat((0, financialCalculator_1.paiseToRupees)(breakdown.net_payable_to_business_paise));
         const pendingList = await turfSettlementRepository_1.turfSettlementRepository.findPendingByOrg(booking.organization_id);
         let settlement = pendingList[0];
         if (!settlement) {
