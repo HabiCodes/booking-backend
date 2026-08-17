@@ -95,6 +95,7 @@ router.get('/my/bookings/:id', async (req, res, next) => {
     const userId = (req as any).user?.id;
     const booking = await turfBookingRepository.findDetail(Number(req.params.id));
     if (!booking) throw new AppError('Booking not found', 404);
+    if (booking.user_id !== userId) throw new AppError('Not your booking', 403);
     res.json({ success: true, data: booking });
   } catch (err) { next(err); }
 });

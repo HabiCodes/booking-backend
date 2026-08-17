@@ -1058,10 +1058,12 @@ export class AvailabilityEngine {
       const durationMs = end.getTime() - start.getTime();
       const durationMinutes = Math.max(1, Math.round(durationMs / 60000));
 
-      // Format time for display (currently UTC — the DB stores UTC timestamps)
+      // Format time for display in IST (Asia/Kolkata = UTC+5:30)
+      const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
       const formatTime = (d: Date): string => {
-        const hours = d.getUTCHours();
-        const minutes = d.getUTCMinutes();
+        const ist = new Date(d.getTime() + IST_OFFSET_MS);
+        const hours = ist.getHours();
+        const minutes = ist.getMinutes();
         const h12 = hours % 12 || 12;
         const ampm = hours < 12 ? 'AM' : 'PM';
         return `${h12}:${minutes.toString().padStart(2, '0')} ${ampm}`;

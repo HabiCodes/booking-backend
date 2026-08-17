@@ -20,6 +20,7 @@ import { refundRepository } from '../repositories/refundRepository';
 import { webhookEventRepository } from '../repositories/webhookEventRepository';
 import { turfBookingService } from '../services/turfBookingService';
 import { turfAvailabilityService } from '../services/turfAvailabilityService';
+import { assertTransition, TURF_BOOKING_STATES } from '../services/turfStateMachine';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
@@ -64,11 +65,7 @@ function verifyWebhookSignature(rawBody: Buffer, signatureHeader: string | undef
   const expBuf = Buffer.from(expected, 'hex');
   if (sigBuf.length !== expBuf.length) return false;
 
-  let mismatch = 0;
-  for (let i = 0; i < sigBuf.length; i++) {
-    mismatch |= sigBuf[i] ^ expBuf[i];
-  }
-  return mismatch === 0;
+  return crypto.timingSafeEqual(sigBuf, expBuf);
 }
 
 /**
@@ -163,14 +160,17 @@ router.post('/cashfree', async (req: any, res: any, next: any): Promise<void> =>
       processed = true;
 
     } else if (newStatus === 'FAILED' || newStatus === 'CANCELLED' || newStatus === 'EXPIRED') {
-      // Payment failed — cancel the booking
+      // Payment failed — cancel the booking via state machine
       const paymentOrder = await paymentOrderRepository.findByOrderId(safeOrderId);
       if (paymentOrder) {
         const booking = await turfBookingRepository.findById(paymentOrder.booking_id);
         if (booking && booking.status === 'pending_payment') {
-          // Release slot
-          await turfAvailabilityService.markAvailable(booking.availability_unit_id);
-          await turfBookingRepository.updateStatus(booking.id, 'cancelled', { payment_status: 'failed' });
+          // cancelBooking enforces state machine (pending_payment → cancelled/refunded),
+          // releases slot, revokes QR, and releases coupon reservations.
+          await turfBookingService.cancelBooking(booking.id, 0, 'Payment failed via Cashfree webhook', {
+            actorId: 0,
+            actorType: 'cashfree_webhook',
+          });
           logger.info(`[TurfWebhook] Booking cancelled via webhook: ${booking.booking_reference}`);
         }
       }

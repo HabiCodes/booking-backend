@@ -7,7 +7,7 @@ exports.organizationRepository = exports.OrganizationRepository = void 0;
 const pool_1 = require("../db/pool");
 class OrganizationRepository {
     async findById(id) {
-        const { rows } = await (0, pool_1.getPool)().query('SELECT * FROM organizations WHERE id = $1 AND deleted_at IS NULL LIMIT 1', [id]);
+        const { rows } = await (0, pool_1.getPool)().query('SELECT * FROM organizations WHERE id = $1 LIMIT 1', [id]);
         return rows[0] || null;
     }
     async findBySlug(slug) {

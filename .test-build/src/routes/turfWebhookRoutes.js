@@ -25,7 +25,6 @@ const paymentOrderRepository_1 = require("../repositories/paymentOrderRepository
 const refundRepository_1 = require("../repositories/refundRepository");
 const webhookEventRepository_1 = require("../repositories/webhookEventRepository");
 const turfBookingService_1 = require("../services/turfBookingService");
-const turfAvailabilityService_1 = require("../services/turfAvailabilityService");
 const logger_1 = require("../utils/logger");
 const config_1 = require("../config");
 const router = (0, express_1.Router)();
@@ -67,11 +66,7 @@ function verifyWebhookSignature(rawBody, signatureHeader) {
     const expBuf = Buffer.from(expected, 'hex');
     if (sigBuf.length !== expBuf.length)
         return false;
-    let mismatch = 0;
-    for (let i = 0; i < sigBuf.length; i++) {
-        mismatch |= sigBuf[i] ^ expBuf[i];
-    }
-    return mismatch === 0;
+    return crypto_1.default.timingSafeEqual(sigBuf, expBuf);
 }
 /**
  * Build a deterministic idempotency key from stable Cashfree identifiers.
@@ -154,14 +149,17 @@ router.post('/cashfree', async (req, res, next) => {
             processed = true;
         }
         else if (newStatus === 'FAILED' || newStatus === 'CANCELLED' || newStatus === 'EXPIRED') {
-            // Payment failed — cancel the booking
+            // Payment failed — cancel the booking via state machine
             const paymentOrder = await paymentOrderRepository_1.paymentOrderRepository.findByOrderId(safeOrderId);
             if (paymentOrder) {
                 const booking = await turfBookingRepository_1.turfBookingRepository.findById(paymentOrder.booking_id);
                 if (booking && booking.status === 'pending_payment') {
-                    // Release slot
-                    await turfAvailabilityService_1.turfAvailabilityService.markAvailable(booking.availability_unit_id);
-                    await turfBookingRepository_1.turfBookingRepository.updateStatus(booking.id, 'cancelled', { payment_status: 'failed' });
+                    // cancelBooking enforces state machine (pending_payment → cancelled/refunded),
+                    // releases slot, revokes QR, and releases coupon reservations.
+                    await turfBookingService_1.turfBookingService.cancelBooking(booking.id, 0, 'Payment failed via Cashfree webhook', {
+                        actorId: 0,
+                        actorType: 'cashfree_webhook',
+                    });
                     logger_1.logger.info(`[TurfWebhook] Booking cancelled via webhook: ${booking.booking_reference}`);
                 }
             }

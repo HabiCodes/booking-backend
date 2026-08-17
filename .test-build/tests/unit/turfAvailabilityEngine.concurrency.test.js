@@ -335,6 +335,42 @@ function intervalsOverlap(aStart, aEnd, bStart, bEnd) {
         node_assert_1.default.strictEqual(formatTime(14, 30), '2:30 PM');
         node_assert_1.default.strictEqual(formatTime(23, 59), '11:59 PM');
     });
+    // ── IST timezone display regression tests ────────────────────────────────────
+    // The DB stores timestamps in UTC. getCustomerAvailability must display
+    // times in IST (Asia/Kolkata = UTC+5:30) for the end-user, not in UTC.
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // 5h30m in milliseconds
+    function formatTimeIST(utcIso) {
+        const d = new Date(utcIso);
+        const ist = new Date(d.getTime() + IST_OFFSET_MS);
+        // Use UTC accessors because the shifted Date is treated as UTC midnight
+        // and getHours()/getMinutes() return local host time.
+        const hours = ist.getUTCHours();
+        const minutes = ist.getUTCMinutes();
+        const h12 = hours % 12 || 12;
+        const ampm = hours < 12 ? 'AM' : 'PM';
+        return `${h12}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+    }
+    (0, node_test_1.it)('6 AM IST slot (stored as 00:30 UTC) displays as "6:00 AM" not "12:30 AM"', () => {
+        // A 6:00 AM IST booking is stored as 00:30 UTC in the database.
+        // Without IST conversion this would incorrectly show "12:30 AM".
+        node_assert_1.default.strictEqual(formatTimeIST('2026-08-15T00:30:00.000Z'), '6:00 AM');
+    });
+    (0, node_test_1.it)('11:30 PM IST slot (stored as 18:00 UTC) displays as "11:30 PM"', () => {
+        node_assert_1.default.strictEqual(formatTimeIST('2026-08-15T18:00:00.000Z'), '11:30 PM');
+    });
+    (0, node_test_1.it)('midnight IST (stored as 18:30 UTC previous day) displays as "12:00 AM"', () => {
+        // IST midnight on Aug 15 = 18:30 UTC on Aug 14
+        node_assert_1.default.strictEqual(formatTimeIST('2026-08-14T18:30:00.000Z'), '12:00 AM');
+    });
+    (0, node_test_1.it)('noon IST (stored as 06:30 UTC) displays as "12:00 PM"', () => {
+        node_assert_1.default.strictEqual(formatTimeIST('2026-08-15T06:30:00.000Z'), '12:00 PM');
+    });
+    (0, node_test_1.it)('9:00 AM IST (stored as 03:30 UTC) displays as "9:00 AM"', () => {
+        node_assert_1.default.strictEqual(formatTimeIST('2026-08-15T03:30:00.000Z'), '9:00 AM');
+    });
+    (0, node_test_1.it)('2:30 PM IST (stored as 09:00 UTC) displays as "2:30 PM"', () => {
+        node_assert_1.default.strictEqual(formatTimeIST('2026-08-15T09:00:00.000Z'), '2:30 PM');
+    });
     (0, node_test_1.it)('computes duration_minutes correctly', () => {
         const start = new Date('2026-08-15T10:00:00.000Z');
         const end = new Date('2026-08-15T11:30:00.000Z');

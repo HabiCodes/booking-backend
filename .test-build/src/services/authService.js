@@ -384,7 +384,7 @@ class AuthService {
         // Issue tokens and create session
         const sessionId = await authRepository_1.authRepository.createSession(user.id, deviceInfo ?? null, ipAddress ?? null, null, // userAgent — set by caller
         true);
-        const tokens = this.issueTokens(user.id, user.email, sessionId);
+        const tokens = this.issueTokens(Number(user.id), user.email, sessionId);
         const publicUser = {
             id: user.id,
             email: user.email,
