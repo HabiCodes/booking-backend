@@ -35,7 +35,17 @@ export function getPool(): Pool {
       logger.error('PostgreSQL pool error:', err);
     });
 
-    logger.info(`PostgreSQL pool initialized (max=${config.db.connectionLimit})`);
+    // Enforce IST timezone on every new physical connection.
+    // The domain is India-only and TIMESTAMPTZ columns need a deterministic
+    // session timezone so that NOW() / CURRENT_DATE and date_trunc() calls
+    // are consistent across app servers.
+    pool.on('connect', (client) => {
+      client.query("SET TIME ZONE 'Asia/Kolkata'").catch((err) => {
+        logger.error('Failed to set session timezone:', err);
+      });
+    });
+
+    logger.info(`PostgreSQL pool initialized (max=${config.db.connectionLimit}, tz=Asia/Kolkata)`);
   }
   return pool;
 }

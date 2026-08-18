@@ -75,7 +75,7 @@ function getPaymentService(): PaymentService {
 }
 
 // Alias for backwards compatibility in code that calls paymentService.createOrder()
-const paymentService = { createOrder: (...args: Parameters<PaymentService['createOrder']>) => getPaymentService().createOrder(...args) };
+export const paymentService = { createOrder: (...args: Parameters<PaymentService['createOrder']>) => getPaymentService().createOrder(...args) };
 
 // ── Package Validation ────────────────────────────────────────────────────────
 

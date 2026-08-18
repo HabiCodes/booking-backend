@@ -21,8 +21,11 @@ export class PaymentOrderRepository {
         input.order_id,
         input.booking_id,
         input.organization_id,
+        // For movie bookings, event_id must be NULL — movie_id is NOT stored
+        // in the event_id column (see migration 034). Store NULL to keep
+        // revenue reporting accurate.
         input.event_id ?? null,
-        input.event_id != null ? 'event' : 'turf',
+        input.event_id != null ? 'event' : input.movie_id != null ? 'movie' : 'turf',
         input.amount,
         input.currency || 'INR',
         input.idempotency_key || null,

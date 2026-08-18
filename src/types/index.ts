@@ -1267,6 +1267,7 @@ export interface PaymentOrderRow {
   status: PaymentOrderStatus;
   payment_method: string | null;
   payment_gateway: PaymentGateway;
+  booking_type: 'event' | 'turf' | 'movie';
   error_code: string | null;
   error_message: string | null;
   verified_at: string | null;
@@ -1303,6 +1304,7 @@ export interface PaymentOrderCreateInput {
   order_id: string;
   organization_id: number;
   event_id?: number | null;
+  movie_id?: number | null;
   amount: number;
   currency?: string;
   idempotency_key?: string;
@@ -2874,3 +2876,565 @@ export const ORGANIZER_PROMOTION_PERMISSIONS: readonly string[] = [
   'promotion_campaigns:cancel',
   'promotion_analytics:read',
 ] as const;
+
+
+// ============================================================================
+// MOVIES DOMAIN
+// ============================================================================
+
+export type MovieStatus = 'coming_soon' | 'now_showing' | 'ended';
+export type CinemaStatus = 'active' | 'inactive' | 'maintenance';
+export type ScreenType = 'standard' | 'imax' | 'dolby' | '4dx' | 'screenx' | 'gold_class';
+export type MovieSeatType = 'standard' | 'premium' | 'sofa' | 'wheelchair';
+export type MovieSeatCategory = 'regular' | 'couple' | 'recliner';
+export type ShowtimeFormat = '2D' | '3D' | 'IMAX 2D' | 'IMAX 3D' | '4DX' | 'ScreenX';
+export type ShowtimeStatus = 'scheduled' | 'on_sale' | 'sold_out' | 'cancelled' | 'completed' | 'hidden';
+export type MovieBookingStatus = 'pending_payment' | 'confirmed' | 'cancelled' | 'expired' | 'refunded' | 'completed';
+export type MoviePaymentStatus = 'initiated' | 'pending' | 'captured' | 'failed' | 'refunded';
+export type MovieTicketStatus = 'valid' | 'used' | 'revoked' | 'expired';
+export type PriceCapAppliesTo = 'all' | 'standard' | 'premium' | 'sofa';
+
+// ── Movies ───────────────────────────────────────────────────────────────────
+
+export interface MovieRow {
+  id: number;
+  title: string;
+  original_title: string | null;
+  slug: string;
+  synopsis: string | null;
+  genre: string[];
+  language: string;
+  duration_minutes: number | null;
+  cast: string[];
+  director: string | null;
+  poster_url: string | null;
+  backdrop_url: string | null;
+  trailer_url: string | null;
+  rating: number | string | null;
+  censor_rating: string | null;
+  release_date: string | null;
+  status: MovieStatus;
+  organization_id: number | null;
+  is_featured: boolean;
+  metadata: Record<string, unknown>;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MoviePublic {
+  id: number;
+  title: string;
+  originalTitle: string | null;
+  slug: string;
+  synopsis: string | null;
+  genre: string[];
+  language: string;
+  durationMinutes: number | null;
+  cast: string[];
+  director: string | null;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  trailerUrl: string | null;
+  rating: number | null;
+  censorRating: string | null;
+  releaseDate: string | null;
+  status: MovieStatus;
+  organizationId: number | null;
+  isFeatured: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MovieCreateInput {
+  title: string;
+  originalTitle?: string | null;
+  slug?: string;
+  synopsis?: string | null;
+  genre?: string[];
+  language?: string;
+  durationMinutes?: number | null;
+  cast?: string[];
+  director?: string | null;
+  posterUrl?: string | null;
+  backdropUrl?: string | null;
+  trailerUrl?: string | null;
+  rating?: number | null;
+  censorRating?: string | null;
+  releaseDate?: string | null;
+  status?: MovieStatus;
+  organizationId?: number | null;
+  isFeatured?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+// ── Cinemas ──────────────────────────────────────────────────────────────────
+
+export interface CinemaRow {
+  id: number;
+  name: string;
+  slug: string;
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  pincode: string | null;
+  latitude: number | string | null;
+  longitude: number | string | null;
+  phone: string | null;
+  email: string | null;
+  facilities: string[];
+  organization_id: number | null;
+  status: CinemaStatus;
+  metadata: Record<string, unknown>;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CinemaPublic {
+  id: number;
+  name: string;
+  slug: string;
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  pincode: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  phone: string | null;
+  email: string | null;
+  facilities: string[];
+  organizationId: number | null;
+  status: CinemaStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CinemaCreateInput {
+  name: string;
+  slug?: string;
+  address: string;
+  city: string;
+  state?: string;
+  country?: string;
+  pincode?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  phone?: string | null;
+  email?: string | null;
+  facilities?: string[];
+  organizationId?: number | null;
+  status?: CinemaStatus;
+  metadata?: Record<string, unknown>;
+}
+
+// ── Cinema Screens ───────────────────────────────────────────────────────────
+
+export interface CinemaScreenRow {
+  id: number;
+  cinema_id: number;
+  screen_number: number;
+  name: string | null;
+  seat_capacity: number;
+  screen_type: ScreenType;
+  sound_system: string;
+  screen_width: number | string | null;
+  screen_height: number | string | null;
+  row_labels: string[];
+  seats_per_row: number[];
+  seat_start_number: number;
+  seat_types: Record<string, unknown>;
+  pricing_rules: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CinemaScreenPublic {
+  id: number;
+  cinemaId: number;
+  screenNumber: number;
+  name: string | null;
+  seatCapacity: number;
+  screenType: ScreenType;
+  soundSystem: string;
+  rowLabels: string[];
+  seatsPerRow: number[];
+  seatStartNumber: number;
+  seatTypes: Record<string, unknown>;
+  pricingRules: Record<string, unknown>;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CinemaScreenCreateInput {
+  cinemaId: number;
+  screenNumber: number;
+  name?: string | null;
+  seatCapacity: number;
+  screenType?: ScreenType;
+  soundSystem?: string;
+  rowLabels: string[];
+  seatsPerRow: number[];
+  seatStartNumber?: number;
+  seatTypes?: Record<string, unknown>;
+  pricingRules?: Record<string, unknown>;
+}
+
+// ── Cinema Seats ─────────────────────────────────────────────────────────────
+
+export interface CinemaSeatRow {
+  id: number;
+  screen_id: number;
+  row_label: string;
+  seat_number: number;
+  seat_type: MovieSeatType;
+  seat_category: MovieSeatCategory;
+  x_position: number | string | null;
+  y_position: number | string | null;
+  is_available: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CinemaSeatPublic {
+  id: number;
+  screenId: number;
+  rowLabel: string;
+  seatNumber: number;
+  seatType: MovieSeatType;
+  seatCategory: MovieSeatCategory;
+  xPosition: number | null;
+  yPosition: number | null;
+  isAvailable: boolean;
+}
+
+export interface CinemaSeatCreateInput {
+  screenId: number;
+  rowLabel: string;
+  seatNumber: number;
+  seatType?: MovieSeatType;
+  seatCategory?: MovieSeatCategory;
+  xPosition?: number | null;
+  yPosition?: number | null;
+  isAvailable?: boolean;
+}
+
+// ── Showtimes ────────────────────────────────────────────────────────────────
+
+export interface ShowtimeRow {
+  id: number;
+  movie_id: number;
+  cinema_id: number;
+  screen_id: number;
+  organization_id: number | null;
+  show_datetime: string;
+  end_datetime: string;
+  language: string;
+  format: ShowtimeFormat;
+  price: number;            // paise (INTEGER)
+  currency: string;
+  total_seats: number;
+  available_seats: number;
+  booked_seats: number;
+  status: ShowtimeStatus;
+  is_hidden: boolean;
+  metadata: Record<string, unknown>;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ShowtimePublic {
+  id: number;
+  movieId: number;
+  cinemaId: number;
+  screenId: number;
+  organizationId: number | null;
+  showDatetime: string;
+  endDatetime: string;
+  language: string;
+  format: ShowtimeFormat;
+  price: number;            // paise
+  currency: string;
+  totalSeats: number;
+  availableSeats: number;
+  bookedSeats: number;
+  status: ShowtimeStatus;
+  isHidden: boolean;
+}
+
+export interface ShowtimeCreateInput {
+  movieId: number;
+  cinemaId: number;
+  screenId: number;
+  organizationId?: number | null;
+  showDatetime: string;
+  endDatetime: string;
+  language?: string;
+  format?: ShowtimeFormat;
+  price: number;            // paise
+  currency?: string;
+  totalSeats: number;
+  status?: ShowtimeStatus;
+  metadata?: Record<string, unknown>;
+}
+
+// ── Movie Bookings ───────────────────────────────────────────────────────────
+
+export interface MovieBookingRow {
+  id: number;
+  booking_reference: string;
+  user_id: number;
+  organization_id: number | null;
+  movie_id: number;
+  cinema_id: number;
+  cinema_screen_id: number;
+  showtime_id: number;
+  amount: number;           // paise
+  currency: string;
+  seat_count: number;
+  status: MovieBookingStatus;
+  payment_status: MoviePaymentStatus;
+  idempotency_key: string | null;
+  hold_expires_at: string | null;
+  metadata: Record<string, unknown>;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MovieBookingPublic {
+  id: number;
+  bookingReference: string;
+  userId: number;
+  organizationId: number | null;
+  movieId: number;
+  cinemaId: number;
+  cinemaScreenId: number;
+  showtimeId: number;
+  amount: number;
+  currency: string;
+  seatCount: number;
+  status: MovieBookingStatus;
+  paymentStatus: MoviePaymentStatus;
+  holdExpiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MovieBookingCreateInput {
+  userId: number;
+  organizationId: number | null;
+  movieId: number;
+  cinemaId: number;
+  cinemaScreenId: number;
+  showtimeId: number;
+  amount: number;
+  currency?: string;
+  seatCount: number;
+  status?: MovieBookingStatus;
+  paymentStatus?: MoviePaymentStatus;
+  idempotencyKey?: string | null;
+  holdExpiresAt?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MovieBookingWithDetails {
+  booking: MovieBookingRow;
+  movie: MovieRow;
+  cinema: CinemaRow;
+  screen: CinemaScreenRow;
+  showtime: ShowtimeRow;
+  items: Array<MovieBookingItemRow & { ticket?: MovieTicketRow }>;
+}
+
+// ── Movie Booking Items ──────────────────────────────────────────────────────
+
+export interface MovieBookingItemRow {
+  id: number;
+  booking_id: number;
+  showtime_id: number;
+  seat_id: number;
+  seat_label: string;
+  row_label: string;
+  seat_number: number;
+  seat_type: MovieSeatType;
+  seat_category: MovieSeatCategory;
+  price: number;            // paise
+  currency: string;
+  created_at: string;
+}
+
+export interface MovieBookingItemPublic {
+  id: number;
+  bookingId: number;
+  showtimeId: number;
+  seatId: number;
+  seatLabel: string;
+  rowLabel: string;
+  seatNumber: number;
+  seatType: MovieSeatType;
+  seatCategory: MovieSeatCategory;
+  price: number;
+  currency: string;
+}
+
+// ── Movie Tickets ────────────────────────────────────────────────────────────
+
+export interface MovieTicketRow {
+  id: number;
+  booking_id: number;
+  booking_item_id: number;
+  ticket_uuid: string;
+  showtime_id: number;
+  seat_label: string;
+  row_label: string;
+  seat_number: number;
+  seat_type: MovieSeatType;
+  qr_data: string;
+  signature: string;
+  status: MovieTicketStatus;
+  used_at: string | null;
+  used_by: number | null;
+  revoked_at: string | null;
+  revoked_by: number | null;
+  revoked_reason: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MovieTicketPublic {
+  id: number;
+  bookingId: number;
+  bookingItemId: number;
+  ticketUuid: string;
+  showtimeId: number;
+  seatLabel: string;
+  rowLabel: string;
+  seatNumber: number;
+  seatType: MovieSeatType;
+  qrData: string;
+  signature: string;
+  status: MovieTicketStatus;
+  usedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+export interface MovieTicketWithDetails extends MovieTicketPublic {
+  movieTitle: string;
+  cinemaName: string;
+  cinemaCity: string;
+  screenName: string | null;
+  showtimeDatetime: string;
+  showtimeFormat: ShowtimeFormat;
+  showtimeLanguage: string;
+}
+
+// ── Movie Price Caps ─────────────────────────────────────────────────────────
+
+export interface MoviePriceCapRow {
+  id: number;
+  organization_id: number | null;
+  city: string;
+  state: string;
+  max_price_paise: number | null;
+  currency: string;
+  applies_to: PriceCapAppliesTo;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MoviePriceCapPublic {
+  id: number;
+  organizationId: number | null;
+  city: string;
+  state: string;
+  maxPricePaise: number | null;
+  currency: string;
+  appliesTo: PriceCapAppliesTo;
+  isActive: boolean;
+  notes: string | null;
+}
+
+export interface MoviePriceCapCreateInput {
+  organizationId: number | null;
+  city: string;
+  state: string;
+  maxPricePaise: number | null;
+  currency?: string;
+  appliesTo?: PriceCapAppliesTo;
+  isActive?: boolean;
+  notes?: string | null;
+}
+
+// ── Seat Hold (Redis-backed) ────────────────────────────────────────────────
+
+export interface SeatHoldRequest {
+  showtimeId: number;
+  seatIds: number[];
+  userId: number;
+  ttlSeconds?: number;       // default 600 (10 min)
+}
+
+export interface SeatHoldResult {
+  success: boolean;
+  heldSeatIds: number[];
+  conflictedSeatIds: number[];
+  holdExpiresAt: string;
+  holdKey: string;
+}
+
+export interface SeatAvailabilityRow {
+  seatId: number;
+  rowLabel: string;
+  seatNumber: number;
+  seatType: MovieSeatType;
+  seatCategory: MovieSeatCategory;
+  status: 'available' | 'held' | 'booked';
+  holdExpiresAt: string | null;
+  pricePaise: number;
+}
+
+export interface SeatLayoutResponse {
+  showtimeId: number;
+  screenId: number;
+  price: number;
+  currency: string;
+  rows: Array<{
+    rowLabel: string;
+    seatType: MovieSeatType;
+    seats: Array<{
+      seatId: number;
+      seatNumber: number;
+      status: 'available' | 'held' | 'booked';
+      pricePaise: number;
+    }>;
+  }>;
+}
+
+// ── Seat Pricing ──────────────────────────────────────────────────────────────
+
+export interface MovieSeatPrice {
+  seatId: number;
+  basePricePaise: number;
+  finalPricePaise: number;
+  seatType: MovieSeatType;
+  capped: boolean;
+  capReason: string | null;
+}
+
+export interface MoviePricingResult {
+  showtimeId: number;
+  totalPaise: number;
+  currency: string;
+  items: MovieSeatPrice[];
+  appliedCaps: Array<{ seatId: number; reason: string }>;
+}
