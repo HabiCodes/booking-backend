@@ -124,6 +124,10 @@ router.post('/organizations/:organizationId/validate-qr',
         return res.status(404).json({ success: true, data: { valid: false, reason: 'Booking not found' } });
       }
 
+      if (booking.organization_id !== orgId) {
+        return res.status(403).json({ success: true, data: { valid: false, reason: 'This booking does not belong to your organization' } });
+      }
+
       // Try check-in (validates all conditions internally)
       let updated;
       try {

@@ -2,8 +2,7 @@
  * Turf settlement service — payout tracking for turf organizations.
  *
  * Single source of truth for all financial rates:
- *   - Commission rate: organizations.commission_rate (overridable per-org)
- *   - TDS rate, platform fee, GST: financial_configs table (via FinancialConfigService)
+ *   - Commission rate, TDS, platform fee, GST: financial_configs table (via FinancialConfigService)
  *
  * Arithmetic is delegated to FinancialCalculator which works in integer paise
  * to avoid floating-point drift.
@@ -16,9 +15,6 @@ import { getPool } from '../db/pool';
 import { financialConfigService } from './financialConfigService';
 import { calculateBookingFinancials, rupeesToPaise, paiseToRupees } from './financialCalculator';
 
-// Conversion: percent (e.g. 10 for 10%) → basis points.
-const percentToBps = (percent: number): number => Math.round(percent * 100);
-
 export class TurfSettlementService {
   async createSettlementForBooking(bookingId: number) {
     const booking = await turfBookingRepository.findById(bookingId);
@@ -30,25 +26,12 @@ export class TurfSettlementService {
     const grossAmount = parseFloat(booking.amount);
     const grossAmountPaise = rupeesToPaise(grossAmount);
 
-    // Resolve commission and TDS from the single source of truth.
-    const orgCommissionResult = await getPool().query(
-      'SELECT commission_rate FROM organizations WHERE id = $1',
-      [booking.organization_id]
-    );
-    const orgCommissionPercent = parseFloat(orgCommissionResult.rows[0]?.commission_rate ?? '10');
-    const orgCommissionBps = percentToBps(orgCommissionPercent);
-
+    // All rates come from the single source of truth.
     const configSnapshot = await financialConfigService.getSnapshot(booking.organization_id);
-    // Compose a snapshot that respects org-level commission while pulling TDS/other rates
-    // from the financial_configs table.
-    const composedConfig = {
-      ...configSnapshot,
-      commission_bps: orgCommissionBps,
-    };
 
     const breakdown = calculateBookingFinancials({
       gross_amount_paise: grossAmountPaise,
-      config: composedConfig,
+      config: configSnapshot,
     });
 
     // Convert paise back to the existing rupees-with-2dp convention that the

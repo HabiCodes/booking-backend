@@ -19,8 +19,6 @@ import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
 import { refundRepository } from '../repositories/refundRepository';
 import { webhookEventRepository } from '../repositories/webhookEventRepository';
 import { turfBookingService } from '../services/turfBookingService';
-import { turfAvailabilityService } from '../services/turfAvailabilityService';
-import { assertTransition, TURF_BOOKING_STATES } from '../services/turfStateMachine';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
@@ -79,6 +77,7 @@ function buildIdempotencyKey(orderId: string, eventType: string): string {
 }
 
 router.post('/cashfree', async (req: any, res: any, next: any): Promise<void> => {
+  let webhookRecord: any = null;
   try {
     // ── 0. Raw body for signature verification ─────────────────────────────
     const rawBody: Buffer = req.rawBody;
@@ -128,11 +127,12 @@ router.post('/cashfree', async (req: any, res: any, next: any): Promise<void> =>
     }
 
     // ── 5. Record webhook event (before processing) ───────────────────────
-    await webhookEventRepository.create(safeEventType, idempotencyKey, parsed, safeOrderId);
+    const webhookRecord = await webhookEventRepository.create(safeEventType, idempotencyKey, parsed, safeOrderId);
 
     // ── 6. Process the payment event ──────────────────────────────────────
-    const newStatus = CF_EVENT_MAP[safeEventType];
     let processed = false;
+
+    const newStatus = CF_EVENT_MAP[safeEventType];
 
     if (newStatus === 'COMPLETED') {
       // Payment success — confirm the booking
@@ -140,9 +140,6 @@ router.post('/cashfree', async (req: any, res: any, next: any): Promise<void> =>
       if (paymentOrder && paymentOrder.organization_id) {
         const booking = await turfBookingRepository.findById(paymentOrder.booking_id);
         if (booking && booking.status === 'pending_payment') {
-          // confirmBooking's actorId type may be number; cast for webhook context.
-          // Use -1 as a sentinel "system" actor since DB schema may require a number.
-          // The audit log will show actorType='system_cashfree_webhook' for clarity.
           await turfBookingService.confirmBooking(booking.id, {
             actorId: 0,
             actorType: 'webhook',
@@ -165,8 +162,6 @@ router.post('/cashfree', async (req: any, res: any, next: any): Promise<void> =>
       if (paymentOrder) {
         const booking = await turfBookingRepository.findById(paymentOrder.booking_id);
         if (booking && booking.status === 'pending_payment') {
-          // cancelBooking enforces state machine (pending_payment → cancelled/refunded),
-          // releases slot, revokes QR, and releases coupon reservations.
           await turfBookingService.cancelBooking(booking.id, 0, 'Payment failed via Cashfree webhook', {
             actorId: 0,
             actorType: 'cashfree_webhook',
@@ -228,11 +223,22 @@ router.post('/cashfree', async (req: any, res: any, next: any): Promise<void> =>
     }
 
     if (!processed && !newStatus) {
+      await webhookEventRepository.markProcessed(webhookRecord.id);
       return res.json({ success: true, message: 'Ignored unknown event' });
     }
 
+    await webhookEventRepository.markProcessed(webhookRecord.id);
     res.json({ success: true, message: 'Processed' });
+
   } catch (err) {
+    // Mark as failed so retries know not to re-attempt a broken event
+    if (typeof webhookRecord !== 'undefined' && webhookRecord?.id) {
+      try {
+        await webhookEventRepository.markFailed(webhookRecord.id, (err as Error).message);
+      } catch {
+        // best-effort
+      }
+    }
     next(err);
   }
 });

@@ -6,6 +6,7 @@ import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 import { getPool } from '../db/pool';
 import { getRedis } from '../db/redis';
+import crypto from 'crypto';
 import { assertTransition, TURF_BOOKING_STATES } from './turfStateMachine';
 import { turfAvailabilityRepository } from '../repositories/turfAvailabilityRepository';
 import { turfBookingRepository } from '../repositories/turfBookingRepository';
@@ -154,8 +155,9 @@ export class TurfBookingService {
           await client.query('ROLLBACK');
           throw new AppError('Coupon is not active', 400);
         }
-        if (new Date() < new Date(coupon.valid_until)) {
-          // still valid, check min_booking_amount
+        if (new Date() > new Date(coupon.valid_until)) {
+          await client.query('ROLLBACK');
+          throw new AppError('Coupon has expired', 400);
         }
         const basePrice = parseFloat(unit.price ?? resource.base_price) * quantity;
         if (parseFloat(coupon.min_booking_amount as string) > basePrice) {
@@ -301,6 +303,7 @@ export class TurfBookingService {
         payment_gateway_ref: paymentOrder.cf_payment_id || undefined,
       });
 
+      await client.query('COMMIT');
 
       // ── Post-Commit: QR Generation ────────────────────────────────────────
       const qrToken = await this._generateQRTicket(booking);
@@ -629,7 +632,8 @@ export class TurfBookingService {
   // ── Private: QR Generation ─────────────────────────────────────────────────
 
   private async _generateQRTicket(booking: any): Promise<string> {
-    const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
+    const randomBytes = crypto.randomBytes(16);
+    const token = `${Date.now().toString(36)}${randomBytes.toString('base64url').slice(0, 22)}`;
     const qrTicket = await turfQRRepository.create(booking.id, token);
 
     const { signTicket } = await import('../utils/qrCode');
@@ -649,9 +653,9 @@ export class TurfBookingService {
   }
 
   // ── Private: Settlement ────────────────────────────────────────────────────
-  // All financial rates come from:
-  //   - organizations.commission_rate → FinancialCalculator (paise arithmetic)
-  //   - financial_configs (TDS, GST, etc.) via FinancialConfigService
+  // All financial rates come from financialConfigService via FinancialCalculator.
+  // Commission: financial_configs (config_type='commission', scope='global' or 'organization')
+  // TDS: financial_configs (config_type='tds')
   // No hardcoded rates in this method.
 
   private async _createSettlement(bookingId: number, orgId: number, grossAmount: number) {
@@ -659,18 +663,11 @@ export class TurfBookingService {
     if (existing) return; // Idempotent
 
     const grossAmountPaise = Math.round(grossAmount * 100);
-    const orgCommissionPercent = parseFloat(
-      (await getPool().query('SELECT commission_rate FROM organizations WHERE id = $1', [orgId])).rows[0]?.commission_rate ?? '10'
-    );
     const configSnapshot = await financialConfigService.getSnapshot(orgId);
-    const composedConfig = {
-      ...configSnapshot,
-      commission_bps: Math.round(orgCommissionPercent * 100),
-    };
 
     const breakdown = calculateBookingFinancials({
       gross_amount_paise: grossAmountPaise,
-      config: composedConfig,
+      config: configSnapshot,
     });
 
     // Convert paise → INR with 2dp, matching the DB column convention.

@@ -36,6 +36,7 @@ import { turfAdminRoutes } from './routes/turfAdminRoutes';
 import { turfPaymentRoutes } from './routes/turfPaymentRoutes';
 import { turfWebhookRoutes } from './routes/turfWebhookRoutes';
 import { turfManagerRoutes } from './routes/turfManagerRoutes';
+import { startAvailabilityScheduler } from './services/turfAvailabilityScheduler';
 import ownerDashboardRoutes from './routes/ownerDashboardRoutes';
 import ownerManagerRoutes from './routes/ownerManagerRoutes';
 import { assertValidEnvOrExit } from './utils/envValidation';
@@ -224,6 +225,11 @@ async function start() {
 
     // Init Socket.IO
     initSocketServer(server);
+
+    // Start availability scheduler (rolling 15-day window)
+    if (config.nodeEnv !== 'test') {
+      startAvailabilityScheduler();
+    }
 
     // Ensure upload directories exist
     ensureUploadDirs();
