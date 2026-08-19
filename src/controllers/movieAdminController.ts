@@ -153,6 +153,64 @@ export async function deleteScreen(req: AdminRequest, res: Response, next: NextF
   }
 }
 
+export async function getScreenWithLayout(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const screenId = parseInt(req.params.screenId, 10);
+    const screen = await cinemaService.getScreens(parseInt(req.params.cinemaId, 10));
+    const found = screen.find((s) => s.id === screenId);
+    if (!found) return res.status(404).json({ success: false, message: 'Screen not found' });
+    const layout = await cinemaService.getScreenCurrentLayout(screenId);
+    const versions = await cinemaService.getScreenLayoutVersions(screenId);
+    return res.json({ success: true, data: { screen: found, currentLayout: layout, versions } });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listScreenLayoutVersions(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const screenId = parseInt(req.params.screenId, 10);
+    const versions = await cinemaService.getScreenLayoutVersions(screenId);
+    return res.json({ success: true, data: versions });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function setScreenCurrentLayout(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const screenId = parseInt(req.params.screenId, 10);
+    const versionId = parseInt(req.params.versionId, 10);
+    const updated = await cinemaService.setScreenCurrentLayout(screenId, versionId);
+    if (!updated) return res.status(404).json({ success: false, message: 'Layout version not found' });
+    return res.json({ success: true, data: updated });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function createScreenLayoutVersion(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const screenId = parseInt(req.params.screenId, 10);
+    const { name, description } = req.body;
+    const version = await cinemaService.createScreenLayoutVersion(screenId, name, description);
+    return res.status(201).json({ success: true, data: version });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function syncScreenLayout(req: AdminRequest, res: Response, next: NextFunction) {
+  try {
+    const screenId = parseInt(req.params.screenId, 10);
+    const result = await cinemaService.syncScreenLayout(screenId);
+    if (!result) return res.status(404).json({ success: false, message: 'No current layout version to sync' });
+    return res.json({ success: true, data: result });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 // ── Showtimes (admin) ─────────────────────────────────────────────────────────
 
 export async function listAdminShowtimes(req: AdminRequest, res: Response, next: NextFunction) {

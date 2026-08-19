@@ -9,11 +9,13 @@ import { getPool } from '../db/pool';
 import { cinemaRepository } from '../repositories/cinemaRepository';
 import { cinemaScreenRepository } from '../repositories/cinemaScreenRepository';
 import { cinemaSeatRepository } from '../repositories/cinemaSeatRepository';
+import { layoutVersionService } from './layoutVersionService';
 import { logger } from '../utils/logger';
 import type {
   CinemaRow, CinemaPublic,
   CinemaScreenRow, CinemaScreenCreateInput,
-  CinemaSeatRow,
+  CinemaSeatRow, CinemaSeatCreateInput,
+  LayoutVersionPublic,
 } from '../types';
 
 function cinemaToPublic(row: CinemaRow): CinemaPublic {
@@ -134,6 +136,51 @@ export class CinemaService {
 
   async removeScreen(screenId: number): Promise<void> {
     return cinemaScreenRepository.softDelete(screenId);
+  }
+
+  // ── Layout Versioning ─────────────────────────────────────────────────────────
+
+  async getScreenLayoutVersions(screenId: number): Promise<LayoutVersionPublic[]> {
+    return layoutVersionService.listForScreen(screenId);
+  }
+
+  async getScreenCurrentLayout(screenId: number): Promise<LayoutVersionPublic | null> {
+    return layoutVersionService.getCurrent(screenId);
+  }
+
+  async setScreenCurrentLayout(screenId: number, versionId: number): Promise<LayoutVersionPublic | null> {
+    return layoutVersionService.setCurrentVersion(screenId, versionId);
+  }
+
+  async createScreenLayoutVersion(screenId: number, name: string, description?: string): Promise<LayoutVersionPublic> {
+    return layoutVersionService.createNewVersionFromScreen(screenId, name, description);
+  }
+
+  async syncScreenLayout(screenId: number): Promise<LayoutVersionPublic | null> {
+    const current = await layoutVersionService.getCurrent(screenId);
+    if (!current) return null;
+    const screen = await cinemaScreenRepository.findById(screenId);
+    if (!screen) return null;
+
+    // Sync cinema_seats from the screen's current row_labels/seats_per_row config
+    // First clear current cinema_seats
+    await cinemaSeatRepository.softDeleteByScreen(screenId);
+
+    // Recreate seats from the layout version's current configuration
+    const layoutSeats = await layoutVersionService.getSeats(current.id);
+    const cinemaSeats: CinemaSeatCreateInput[] = layoutSeats.map((s) => ({
+      screenId,
+      rowLabel: s.rowLabel,
+      seatNumber: s.seatNumber,
+      seatType: s.seatType,
+      seatCategory: s.seatCategory,
+      xPosition: s.xPosition,
+      yPosition: s.yPosition,
+      isAvailable: s.isAvailable,
+    }));
+    await cinemaSeatRepository.bulkCreate(screenId, cinemaSeats);
+
+    return current;
   }
 }
 

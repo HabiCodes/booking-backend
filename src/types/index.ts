@@ -305,7 +305,27 @@ export type AdminPermission =
   | 'organizer:banking:write'
   | 'organizer:payments:read'
   | 'organizer:payments:write'
-  | 'organizer:payments:refund';
+  | 'organizer:payments:refund'
+  // Movie-specific organizer permissions
+  | 'organizer:movies:read'
+  | 'organizer:movies:write'
+  | 'organizer:movies:delete'
+  | 'organizer:movies:publish'
+  | 'organizer:cinemas:read'
+  | 'organizer:cinemas:write'
+  | 'organizer:cinemas:delete'
+  | 'organizer:showtimes:read'
+  | 'organizer:showtimes:write'
+  | 'organizer:showtimes:delete'
+  | 'organizer:screens:read'
+  | 'organizer:screens:write'
+  | 'organizer:screens:delete'
+  | 'organizer:scanners:read'
+  | 'organizer:scanners:write'
+  | 'organizer:scanners:delete'
+  | 'organizer:price_caps:read'
+  | 'organizer:price_caps:write'
+  | 'organizer:price_caps:delete';
 
 export interface AdminRow {
   id: number;
@@ -978,6 +998,10 @@ export interface OrganizerUserRow {
   is_active: boolean;
   must_change_password: boolean;
   last_login_at: string | null;
+  last_login_ip: string | null;
+  failed_login_attempts: number;
+  locked_until: string | null;
+  invitation_token_hash: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1012,6 +1036,104 @@ export interface OrganizerUserUpdateInput {
   role?: OrganizerUserRole;
   permissions?: Record<string, boolean>;
   is_active?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Organizer Invitations (Migration 036)
+// ---------------------------------------------------------------------------
+
+export type InvitationStatus = 'pending' | 'accepted' | 'expired' | 'revoked' | 'cancelled';
+export type InvitationRole = 'manager';
+
+export interface InvitationRow {
+  id: number;
+  organization_id: number;
+  inviter_id: number;
+  email: string;
+  role: string;
+  token_hash: string;
+  status: InvitationStatus;
+  expires_at: string;
+  accepted_at: string | null;
+  used_at: string | null;
+  message: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InvitationPublic {
+  id: number;
+  organizationId: number;
+  inviterId: number;
+  email: string;
+  role: string;
+  status: InvitationStatus;
+  expiresAt: string;
+  acceptedAt?: string;
+  usedAt?: string;
+  message?: string;
+  createdAt: string;
+  updatedAt: string;
+  // Joined fields when listing with org info
+  organizationName?: string;
+  organizationDisplayName?: string;
+}
+
+export interface InvitationCreateInput {
+  email: string;
+  role?: InvitationRole;
+  message?: string;
+  expiresInHours?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Organizer Sessions (Migration 036)
+// ---------------------------------------------------------------------------
+
+export interface OrganizerSessionRow {
+  id: number;
+  organizer_user_id: number;
+  token_jti: string;
+  device_name: string | null;
+  device_type: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  is_active: boolean;
+  last_active_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface OrganizerSessionPublic {
+  id: number;
+  deviceName: string | null;
+  deviceType: string;
+  ipAddress: string | null;
+  isActive: boolean;
+  lastActiveAt: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Organizer Activity Log (Migration 036)
+// ---------------------------------------------------------------------------
+
+export interface OrganizerActivityRow {
+  id: number;
+  organizer_user_id: number;
+  organization_id: number;
+  action: string;
+  resource_type: string;
+  resource_id: number | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  old_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export interface OrganizerPasswordTokenRow {
@@ -1248,7 +1370,7 @@ export type PaymentOrderStatus =
   | 'PARTIALLY_REFUNDED'
   | 'REFUNDED';
 
-export type PaymentGateway = 'cashfree';
+export type PaymentGateway = 'cashfree' | 'manual';
 
 export type VerificationSource = 'webhook' | 'api_poll';
 
@@ -2890,7 +3012,9 @@ export type MovieSeatCategory = 'regular' | 'couple' | 'recliner';
 export type ShowtimeFormat = '2D' | '3D' | 'IMAX 2D' | 'IMAX 3D' | '4DX' | 'ScreenX';
 export type ShowtimeStatus = 'scheduled' | 'on_sale' | 'sold_out' | 'cancelled' | 'completed' | 'hidden';
 export type MovieBookingStatus = 'pending_payment' | 'confirmed' | 'cancelled' | 'expired' | 'refunded' | 'completed';
-export type MoviePaymentStatus = 'initiated' | 'pending' | 'captured' | 'failed' | 'refunded';
+export type MoviePaymentStatus = 'initiated' | 'pending' | 'captured' | 'failed' | 'refunded' | 'paid_offline';
+export type MovieBookingType = 'online' | 'offline' | 'complimentary';
+export type OfflinePaymentMethod = 'CASH' | 'UPI' | 'CARD';
 export type MovieTicketStatus = 'valid' | 'used' | 'revoked' | 'expired';
 export type PriceCapAppliesTo = 'all' | 'standard' | 'premium' | 'sofa';
 
@@ -2942,6 +3066,7 @@ export interface MoviePublic {
   status: MovieStatus;
   organizationId: number | null;
   isFeatured: boolean;
+  metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -3123,6 +3248,97 @@ export interface CinemaSeatCreateInput {
   isAvailable?: boolean;
 }
 
+// ============================================================================
+// Layout Versions (Migration 035)
+// ============================================================================
+
+export type LayoutVersionStatus = 'active' | 'inactive' | 'archived';
+
+export interface LayoutVersionRow {
+  id: number;
+  screen_id: number;
+  version_number: number;
+  name: string | null;
+  description: string | null;
+  seat_capacity: number;
+  row_labels: string[];
+  seats_per_row: number[];
+  seat_start_number: number;
+  pricing_rules: Record<string, unknown>;
+  is_active: boolean;
+  is_current: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LayoutVersionPublic {
+  id: number;
+  screenId: number;
+  versionNumber: number;
+  name: string | null;
+  description: string | null;
+  seatCapacity: number;
+  rowLabels: string[];
+  seatsPerRow: number[];
+  seatStartNumber: number;
+  pricingRules: Record<string, unknown>;
+  isActive: boolean;
+  isCurrent: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LayoutVersionCreateInput {
+  screenId: number;
+  versionNumber?: number;
+  name?: string | null;
+  description?: string | null;
+  seatCapacity: number;
+  rowLabels: string[];
+  seatsPerRow: number[];
+  seatStartNumber?: number;
+  pricingRules?: Record<string, unknown>;
+}
+
+export interface LayoutVersionSeatRow {
+  id: number;
+  layout_version_id: number;
+  row_label: string;
+  seat_number: number;
+  seat_type: MovieSeatType;
+  seat_category: MovieSeatCategory;
+  x_position: number | string | null;
+  y_position: number | string | null;
+  is_available: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LayoutVersionSeatPublic {
+  id: number;
+  layoutVersionId: number;
+  rowLabel: string;
+  seatNumber: number;
+  seatType: MovieSeatType;
+  seatCategory: MovieSeatCategory;
+  xPosition: number | null;
+  yPosition: number | null;
+  isAvailable: boolean;
+}
+
+export interface LayoutVersionSeatCreateInput {
+  layoutVersionId: number;
+  rowLabel: string;
+  seatNumber: number;
+  seatType?: string;
+  seatCategory?: string;
+  xPosition?: number | null;
+  yPosition?: number | null;
+  isAvailable?: boolean;
+}
+
 // ── Showtimes ────────────────────────────────────────────────────────────────
 
 export interface ShowtimeRow {
@@ -3197,6 +3413,11 @@ export interface MovieBookingRow {
   amount: number;           // paise
   currency: string;
   seat_count: number;
+  booking_type: MovieBookingType;
+  offline_by_user_id: number | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  customer_name: string | null;
   status: MovieBookingStatus;
   payment_status: MoviePaymentStatus;
   idempotency_key: string | null;
@@ -3219,6 +3440,11 @@ export interface MovieBookingPublic {
   amount: number;
   currency: string;
   seatCount: number;
+  bookingType: MovieBookingType;
+  offlineByUserId: number | null;
+  customerEmail: string | null;
+  customerPhone: string | null;
+  customerName: string | null;
   status: MovieBookingStatus;
   paymentStatus: MoviePaymentStatus;
   holdExpiresAt: string | null;
@@ -3236,6 +3462,11 @@ export interface MovieBookingCreateInput {
   amount: number;
   currency?: string;
   seatCount: number;
+  bookingType?: MovieBookingType;
+  offlineByUserId?: number | null;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+  customerName?: string | null;
   status?: MovieBookingStatus;
   paymentStatus?: MoviePaymentStatus;
   idempotencyKey?: string | null;
@@ -3362,6 +3593,8 @@ export interface MoviePriceCapPublic {
   appliesTo: PriceCapAppliesTo;
   isActive: boolean;
   notes: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface MoviePriceCapCreateInput {

@@ -35,6 +35,7 @@ function toPublic(row: Record<string, unknown>): MoviePublic {
     status: row.status as MovieRow['status'],
     organizationId: row.organization_id as number | null,
     isFeatured: row.is_featured as boolean,
+    metadata: (row.metadata as Record<string, unknown>) || {},
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };

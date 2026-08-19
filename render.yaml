@@ -21,7 +21,23 @@ services:
         generateValue: true
       - key: ADMIN_JWT_SECRET
         generateValue: true
+      - key: ORGANIZER_JWT_SECRET
+        generateValue: true
+      - key: QR_SIGNING_SECRET
+        generateValue: true
+      - key: SHUTDOWN_KEY
+        generateValue: true
       - key: CORS_ORIGIN
+        sync: false
+      - key: DB_SSL
+        value: "true"
+      - key: REDIS_URL
+        sync: false
+      - key: CASHFREE_APP_ID
+        sync: false
+      - key: CASHFREE_SECRET_KEY
+        sync: false
+      - key: CASHFREE_WEBHOOK_SECRET
         sync: false
       - key: DB_RUN_MIGRATIONS
         value: true

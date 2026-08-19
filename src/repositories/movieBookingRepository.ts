@@ -81,8 +81,8 @@ export class MovieBookingRepository {
   async create(input: MovieBookingCreateInput): Promise<MovieBookingRow> {
     const bookingReference = `MOV-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
     const { rows } = await getPool().query(
-      `INSERT INTO movie_bookings (booking_reference, user_id, organization_id, movie_id, cinema_id, cinema_screen_id, showtime_id, amount, currency, seat_count, status, payment_status, idempotency_key, hold_expires_at, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      `INSERT INTO movie_bookings (booking_reference, user_id, organization_id, movie_id, cinema_id, cinema_screen_id, showtime_id, amount, currency, seat_count, booking_type, offline_by_user_id, customer_email, customer_phone, customer_name, status, payment_status, idempotency_key, hold_expires_at, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        RETURNING *`,
       [
         bookingReference,
@@ -95,6 +95,11 @@ export class MovieBookingRepository {
         input.amount,
         input.currency || 'INR',
         input.seatCount,
+        input.bookingType || 'online',
+        input.offlineByUserId ?? null,
+        input.customerEmail ?? null,
+        input.customerPhone ?? null,
+        input.customerName ?? null,
         input.status || 'pending_payment',
         input.paymentStatus || 'initiated',
         input.idempotencyKey || null,

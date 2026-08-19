@@ -8,8 +8,8 @@ import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 import { turfAvailabilityRepository } from '../repositories/turfAvailabilityRepository';
 import { turfResourceRepository } from '../repositories/turfResourceRepository';
+import { turfVenueRepository } from '../repositories/turfVenueRepository';
 
-const LOCK_TTL_SECONDS = 120; // 2 minutes
 const LEGACY_BOOKING_LOCK_TTL = 10; // Legacy Turf used 10s for booking_slot_lock
 
 // ── Slot Windows ──────────────────────────────────────────────────────────────
@@ -69,6 +69,18 @@ export async function reclaimExpiredLocks(resourceId: number): Promise<void> {
   );
 }
 
+/**
+ * Verify that a resource belongs to a venue in the given organization.
+ * turf_resources has no organization_id, so we walk resource.venue_id → turf_venues.organization_id.
+ */
+async function assertResourceInOrg(resourceId: number, organizationId: number): Promise<void> {
+  const resource = await turfResourceRepository.findById(resourceId);
+  if (!resource) throw new AppError('Resource not found', 404);
+  const venue = await turfVenueRepository.findById(resource.venue_id);
+  if (!venue) throw new AppError('Resource venue not found', 404);
+  if (venue.organization_id !== organizationId) throw new AppError('Access denied', 403);
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export class TurfAvailabilityService {
@@ -76,8 +88,11 @@ export class TurfAvailabilityService {
   /**
    * List available slots for a resource on a given date.
    */
-  async listSlots(resourceId: number, date: string) {
-    await turfAvailabilityRepository.reclaimExpiredLocks(resourceId);
+  async listSlots(resourceId: number, date: string, organizationId?: number) {
+    if (organizationId !== undefined) {
+      await assertResourceInOrg(resourceId, organizationId);
+    }
+    await reclaimExpiredLocks(resourceId);
     const units = await turfAvailabilityRepository.findByResource(resourceId, date);
     return units.map(u => turfAvailabilityRepository.toPublic(u));
   }
@@ -85,7 +100,11 @@ export class TurfAvailabilityService {
   /**
    * Generate time slots for a slot_based resource.
    */
-  async generateSlots(resourceId: number, date: string, startTime: string, endTime: string, slotDurationMinutes: number, price?: number) {
+  async generateSlots(resourceId: number, date: string, startTime: string, endTime: string, slotDurationMinutes: number, price?: number, organizationId?: number) {
+    if (organizationId !== undefined) {
+      await assertResourceInOrg(resourceId, organizationId);
+    }
+
     const resource = await turfResourceRepository.findById(resourceId);
     if (!resource) throw new AppError('Resource not found', 404);
     if (resource.resource_type !== 'slot_based') {

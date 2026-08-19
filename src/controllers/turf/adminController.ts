@@ -26,7 +26,7 @@ export async function updateVenueStatus(req: Request, res: Response, next: NextF
     if (!['pending', 'approved', 'suspended'].includes(status)) {
       throw new AppError('Invalid status', 400);
     }
-    const venue = await turfVenueService.update(Number(req.params.venueId), { status });
+    const venue = await turfVenueService.update(Number(req.params.venueId), undefined, { status });
     res.json({ success: true, data: venue });
   } catch (err) { next(err); }
 }

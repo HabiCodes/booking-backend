@@ -60,4 +60,28 @@ router.get('/settlements', async (req: OrganizerRequest, res: Response, next: Fu
   }
 });
 
+/**
+ * GET /api/owner/movies/analytics
+ *
+ * Query params:
+ *   from  — ISO date (default: 30 days ago)
+ *   to    — ISO date (default: today)
+ */
+router.get('/movies/analytics', async (req: OrganizerRequest, res: Response, next: Function) => {
+  try {
+    const user = req.organizerUser;
+    if (!user) {
+      throw new AppError('Unauthorized', 401);
+    }
+
+    const from = (req.query.from as string) ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const to = (req.query.to as string) ?? new Date().toISOString().slice(0, 10);
+
+    const data = await ownerDashboardService.getMovieAnalytics(user.organizationId, { from, to });
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

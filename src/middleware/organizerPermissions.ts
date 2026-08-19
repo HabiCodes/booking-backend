@@ -33,6 +33,19 @@ export function requireOrganizerPermission(permission: string) {
 }
 
 /**
+ * Re-exports role/permission guards from organizerPermissionMiddleware so
+ * existing imports of `requireOwner`, `requireAnyPermission`, etc. continue
+ * to work from `../middleware/organizerPermissions`.
+ */
+export {
+  requireOwner,
+  requireRole,
+  requireAnyPermission,
+  requireAllPermissions,
+  requireOrgOwner,
+} from './organizerPermissionMiddleware';
+
+/**
  * Convenience: check whether the organizer user has a specific permission
  * (returns boolean — useful inside handlers).
  */

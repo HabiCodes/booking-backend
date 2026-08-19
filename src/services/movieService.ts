@@ -54,6 +54,7 @@ function toPublic(row: MovieRow): MoviePublic {
     status: row.status,
     organizationId: row.organization_id,
     isFeatured: row.is_featured,
+    metadata: row.metadata || {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

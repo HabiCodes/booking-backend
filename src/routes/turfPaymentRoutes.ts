@@ -84,6 +84,9 @@ router.post('/create-order', authMiddleware, async (req, res, next) => {
  */
 router.post('/verify', authMiddleware, async (req, res, next) => {
   try {
+    const userId = (req as any).user?.id;
+    if (!userId) throw new AppError('Unauthorized', 401);
+
     const { bookingId, gatewayOrderId, gatewayPaymentId } = req.body;
     if (!bookingId || !gatewayOrderId || !gatewayPaymentId) {
       throw new AppError('bookingId, gatewayOrderId, gatewayPaymentId required', 400);
@@ -91,27 +94,16 @@ router.post('/verify', authMiddleware, async (req, res, next) => {
 
     const booking = await turfBookingRepository.findById(bookingId);
     if (!booking) throw new AppError('Booking not found', 404);
+    if (booking.user_id !== userId) throw new AppError('Not your booking', 403);
 
     if (booking.status !== 'pending_payment') {
       throw new AppError('Booking is not in pending_payment state', 409);
     }
 
-    // Verify with Cashfree
-    const { CashfreePaymentGateway } = await import('../services/cashfreeService');
-    const gateway = new CashfreePaymentGateway({
-      appId: config.cashfree.appId,
-      secretKey: config.cashfree.secretKey,
-      webhookSecret: config.cashfree.webhookSecret,
-      returnUrl: config.cashfree.returnUrl,
-      notifyUrl: config.cashfree.notifyUrl,
-    });
+    // Verify with Cashfree and persist result to DB
+    const order = await getPaymentService().verifyPayment(gatewayOrderId);
 
-    const verifyResult = await gateway.verifyPayment(gatewayOrderId, {
-      cf_payment_id: gatewayPaymentId,
-      order_id: gatewayOrderId,
-    });
-
-    if (verifyResult.success) {
+    if (order.status === 'COMPLETED') {
       // Confirm the booking (this also generates QR, creates settlement, awards coins)
       const confirmed = await turfBookingService.confirmBooking(bookingId, {
         actorId: (req as any).user?.id || 0,
@@ -126,7 +118,7 @@ router.post('/verify', authMiddleware, async (req, res, next) => {
         actorType: 'customer',
       });
 
-      res.json({ success: true, data: { status: 'cancelled', reason: verifyResult.errorMessage } });
+      res.json({ success: true, data: { status: 'cancelled', reason: 'Payment not completed' } });
     }
   } catch (err) { next(err); }
 });

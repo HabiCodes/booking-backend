@@ -33,6 +33,11 @@ function fakeMovieBookingRow(overrides: Partial<MovieBookingRow> = {}): MovieBoo
     amount: 50000,
     currency: 'INR',
     seat_count: 2,
+    booking_type: 'online',
+    offline_by_user_id: null,
+    customer_email: null,
+    customer_phone: null,
+    customer_name: null,
     status: 'pending_payment',
     payment_status: 'initiated',
     idempotency_key: 'movie_booking_42_st_1',
@@ -113,13 +118,11 @@ describe('Movie — ticket signing & verification', () => {
 describe('Movie — seat engine concurrency invariants', () => {
 
   it('partial unique index prevents double-booking (seat_id + showtime_id)', () => {
-    // Migration creates:
+    // Migration 038 adds booking_status column to movie_booking_items,
+    // synced via triggers from movie_bookings.status. Then creates:
     //   CREATE UNIQUE INDEX idx_movie_booking_items_seat_showtime_active
     //   ON movie_booking_items (seat_id, showtime_id)
-    //   WHERE booking_id IN (
-    //     SELECT id FROM movie_bookings
-    //     WHERE status IN ('pending_payment','confirmed') AND deleted_at IS NULL
-    //   );
+    //   WHERE booking_status IN ('pending_payment', 'confirmed');
     //
     // Two concurrent bookings inserting the same seat_id+showtime_id will
     // cause one to fail with Postgres code 23505 (unique violation).

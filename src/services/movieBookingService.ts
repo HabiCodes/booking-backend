@@ -311,6 +311,8 @@ export class MovieBookingService {
       } catch (err: unknown) {
         // Postgres unique violation on partial unique index
         // idx_movie_booking_items_seat_showtime_active (race vs another booking).
+        // Index predicate (set by migration 038) is:
+        //   WHERE booking_status IN ('pending_payment', 'confirmed')
         // Roll back the transaction (handled by withTransaction) so the
         // booking row is also discarded.
         const pgErr = err as { code?: string };

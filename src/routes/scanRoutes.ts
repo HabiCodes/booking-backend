@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { verifyTicket, markTicket } from '../controllers/scanController';
-import { adminAuthMiddleware } from '../middleware/adminAuth';
+import { adminAuthMiddleware, AdminRequest } from '../middleware/adminAuth';
+import { requirePermission } from '../middleware/permissions';
 
 const router = Router();
 
 router.use(adminAuthMiddleware);
 
-router.post('/verify', (req, res, next) => verifyTicket(req, res, next));
-router.post('/mark', (req, res, next) => markTicket(req, res, next));
+router.post('/verify', requirePermission('scanner:verify'), (req, res, next) => verifyTicket(req as AdminRequest, res, next));
+router.post('/mark', requirePermission('scanner:checkin'), (req, res, next) => markTicket(req as AdminRequest, res, next));
 
 export default router;

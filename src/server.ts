@@ -41,8 +41,11 @@ import { movieRoutes } from './routes/movies';
 import { movieWebhookRoutes } from './routes/movieWebhookRoutes';
 import { movieScanRoutes } from './routes/movieScanRoutes';
 import { adminMovieRouter } from './routes/movieAdmin';
+import { layoutVersionRoutes } from './routes/layoutVersionRoutes';
+import { organizerMovieRouter } from './routes/movieManagerRoutes';
 import ownerDashboardRoutes from './routes/ownerDashboardRoutes';
 import ownerManagerRoutes from './routes/ownerManagerRoutes';
+import { organizerInvitationRoutes } from './routes/organizerInvitationRoutes';
 import { assertValidEnvOrExit } from './utils/envValidation';
 import { authRepository } from './repositories/authRepository';
 
@@ -148,6 +151,10 @@ apiV1.use('/organizer/applications', organizerApplicationRoutes);
 apiV1.use('/movies', movieRoutes);
 apiV1.use('/movies/webhooks', movieWebhookRoutes);
 apiV1.use('/admin/movies', adminMovieRouter);
+apiV1.use('/admin/layout-versions', layoutVersionRoutes);
+apiV1.use('/owner/invitations', organizerInvitationRoutes.owner);
+apiV1.use('/invitations', organizerInvitationRoutes.public);
+apiV1.use('/organizer/movies', organizerMovieRouter);
 
 app.use('/api/v1', apiV1);
 
@@ -175,6 +182,8 @@ app.use('/api/organizer/applications', organizerApplicationRoutes);
 app.use('/api/movies', movieRoutes);
 app.use('/api/movies/webhooks', movieWebhookRoutes);
 app.use('/api/admin/movies', adminMovieRouter);
+app.use('/api/admin/layout-versions', layoutVersionRoutes);
+app.use('/api/organizer/movies', organizerMovieRouter);
 
 // ── API documentation ────────────────────────────────────────────────────────
 

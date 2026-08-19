@@ -43,7 +43,7 @@ router.post('/logout', logout);
 router.post('/logout-all', authMiddleware, logoutAll);
 
 router.post('/forgot-password', authRateLimiter, forgotPassword);
-router.post('/reset-password', resetPassword);
+router.post('/reset-password', authRateLimiter, resetPassword);
 
 router.post('/change-password', authMiddleware, changePassword);
 

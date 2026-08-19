@@ -101,6 +101,39 @@ export interface DashboardResponse {
   insights: string[];
 }
 
+// ── Movie Analytics Types ──────────────────────────────────────────────────────
+
+export interface MovieRevenueSummary {
+  totalRevenuePaise: number;
+  bookingCount: number;
+  onlineBookingCount: number;
+  offlineBookingCount: number;
+  avgBookingValuePaise: number;
+  topMovie: { title: string; revenuePaise: number; bookingCount: number } | null;
+}
+
+export interface MovieRevenueByCinema {
+  cinemaId: number;
+  cinemaName: string;
+  city: string;
+  bookingCount: number;
+  revenuePaise: number;
+}
+
+export interface MovieDailyRevenuePoint {
+  date: string;
+  revenuePaise: number;
+  bookingCount: number;
+  offlineCount: number;
+  onlineCount: number;
+}
+
+export interface MoviePaymentBreakdown {
+  paymentMethod: string;
+  count: number;
+  revenuePaise: number;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function inRange(column: string, range: DateRange): { sql: string; params: unknown[] } {
@@ -452,6 +485,125 @@ export class OwnerDashboardService {
       completed_at: row.completed_at ? String(row.completed_at) : null,
       created_at: String(row.created_at),
     }));
+  }
+
+  // ── Movie Analytics ──────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/owner/movies/analytics — movie booking revenue by org.
+   * Returns summary, daily trends, top movies, payment breakdown.
+   */
+  async getMovieAnalytics(orgId: number, range: DateRange): Promise<{
+    summary: MovieRevenueSummary;
+    daily: MovieDailyRevenuePoint[];
+    topMovies: Array<{ title: string; revenuePaise: number; bookingCount: number }>;
+    paymentBreakdown: MoviePaymentBreakdown[];
+  }> {
+    const pool = getPool();
+    const fromTs = range.from + 'T00:00:00Z';
+    const toTs = range.to + 'T23:59:59Z';
+
+    // ── Summary ───────────────────────────────────────────────────────────────
+    const summaryResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(mb.amount), 0)::bigint AS total_revenue_paise,
+         COUNT(*) AS booking_count,
+         COUNT(*) FILTER (WHERE mb.booking_type = 'online') AS online_count,
+         COUNT(*) FILTER (WHERE mb.booking_type = 'offline') AS offline_count,
+         CASE WHEN COUNT(*) > 0 THEN ROUND(SUM(mb.amount) / COUNT(*)) ELSE 0 END AS avg_booking_paise,
+         m.title AS top_movie_title,
+         SUM(mb.amount) AS top_movie_revenue,
+         COUNT(*) AS top_movie_bookings
+       FROM movie_bookings mb
+       JOIN movies m ON m.id = mb.movie_id
+       WHERE mb.organization_id = $1 AND mb.deleted_at IS NULL
+         AND mb.created_at >= $2::timestamptz AND mb.created_at < $3::timestamptz
+       GROUP BY m.title
+       ORDER BY SUM(mb.amount) DESC
+       LIMIT 1`,
+      [orgId, fromTs, toTs]
+    );
+
+    const topRow = summaryResult.rows[0] as Record<string, unknown> | undefined;
+    const summary: MovieRevenueSummary = {
+      totalRevenuePaise: topRow ? Number(topRow.total_revenue_paise ?? 0) : 0,
+      bookingCount: topRow ? Number(topRow.booking_count ?? 0) : 0,
+      onlineBookingCount: topRow ? Number(topRow.online_count ?? 0) : 0,
+      offlineBookingCount: topRow ? Number(topRow.offline_count ?? 0) : 0,
+      avgBookingValuePaise: topRow ? Number(topRow.avg_booking_paise ?? 0) : 0,
+      topMovie: topRow && topRow.top_movie_title
+        ? { title: String(topRow.top_movie_title), revenuePaise: Number(topRow.top_movie_revenue ?? 0), bookingCount: Number(topRow.top_movie_bookings ?? 0) }
+        : null,
+    };
+
+    // ── Daily revenue trend ────────────────────────────────────────────────────
+    const dailyResult = await pool.query(
+      `SELECT
+         DATE(mb.created_at) AS date,
+         COALESCE(SUM(mb.amount), 0)::bigint AS revenue_paise,
+         COUNT(*) AS booking_count,
+         COUNT(*) FILTER (WHERE mb.booking_type = 'offline') AS offline_count,
+         COUNT(*) FILTER (WHERE mb.booking_type = 'online') AS online_count
+       FROM movie_bookings mb
+       WHERE mb.organization_id = $1 AND mb.deleted_at IS NULL
+         AND mb.created_at >= $2::timestamptz AND mb.created_at < $3::timestamptz
+       GROUP BY DATE(mb.created_at)
+       ORDER BY date`,
+      [orgId, fromTs, toTs]
+    );
+
+    const daily = dailyResult.rows.map((row: Record<string, unknown>) => ({
+      date: String(row.date),
+      revenuePaise: Number(row.revenue_paise ?? 0),
+      bookingCount: Number(row.booking_count ?? 0),
+      offlineCount: Number(row.offline_count ?? 0),
+      onlineCount: Number(row.online_count ?? 0),
+    }));
+
+    // ── Top movies by revenue ─────────────────────────────────────────────────
+    const topMoviesResult = await pool.query(
+      `SELECT m.title,
+         COUNT(mb.id) AS booking_count,
+         COALESCE(SUM(mb.amount), 0)::bigint AS revenue_paise
+       FROM movie_bookings mb
+       JOIN movies m ON m.id = mb.movie_id
+       WHERE mb.organization_id = $1 AND mb.deleted_at IS NULL
+         AND mb.created_at >= $2::timestamptz AND mb.created_at < $3::timestamptz
+       GROUP BY m.title
+       ORDER BY revenue_paise DESC
+       LIMIT 10`,
+      [orgId, fromTs, toTs]
+    );
+
+    const topMovies = topMoviesResult.rows.map((row: Record<string, unknown>) => ({
+      title: String(row.title),
+      revenuePaise: Number(row.revenue_paise ?? 0),
+      bookingCount: Number(row.booking_count ?? 0),
+    }));
+
+    // ── Payment method breakdown ──────────────────────────────────────────────
+    // payment_method comes from payment_orders (linked via booking_id)
+    const paymentResult = await pool.query(
+      `SELECT po.payment_method,
+         COUNT(DISTINCT po.booking_id) AS booking_count,
+         COALESCE(SUM(po.amount), 0)::bigint AS revenue_paise
+       FROM payment_orders po
+       JOIN movie_bookings mb ON mb.id = po.booking_id
+       WHERE mb.organization_id = $1 AND po.booking_type = 'movie'
+         AND po.status = 'COMPLETED'
+         AND mb.created_at >= $2::timestamptz AND mb.created_at < $3::timestamptz
+       GROUP BY po.payment_method
+       ORDER BY revenue_paise DESC`,
+      [orgId, fromTs, toTs]
+    );
+
+    const paymentBreakdown = paymentResult.rows.map((row: Record<string, unknown>) => ({
+      paymentMethod: String(row.payment_method ?? 'unknown'),
+      count: Number(row.booking_count ?? 0),
+      revenuePaise: Number(row.revenue_paise ?? 0),
+    }));
+
+    return { summary, daily, topMovies, paymentBreakdown };
   }
 
   // ── Private ────────────────────────────────────────────────────────────────

@@ -96,18 +96,20 @@ export class CinemaRepository {
     const page = query.page || 1;
     const pageSize = Math.min(query.pageSize || 25, 100);
     const offset = (page - 1) * pageSize;
+    // Haversine distance in kilometres. 6371 km = mean Earth radius.
+    const hav = `6371 * ACOS(LEAST(1, COS(RADIANS($1)) * COS(RADIANS(latitude)) * COS(RADIANS(longitude) - RADIANS($2)) + SIN(RADIANS($1)) * SIN(RADIANS(latitude))))`;
     const { rows: countRows } = await getPool().query(
       `SELECT COUNT(*) as total FROM cinemas
        WHERE deleted_at IS NULL AND status = 'active' AND latitude IS NOT NULL AND longitude IS NOT NULL
-       AND SQRT(POWER(latitude - $1, 2) + POWER(longitude - $2, 2)) <= $3`,
+       AND (${hav}) <= $3`,
       [lat, lng, radiusKm]
     );
     const total = Number((countRows as Array<{ total: number | string }>)[0]?.total ?? 0);
     const { rows } = await getPool().query(
-      `SELECT *, SQRT(POWER(latitude - $1, 2) + POWER(longitude - $2, 2)) as distance
+      `SELECT *, (${hav}) as distance
        FROM cinemas
        WHERE deleted_at IS NULL AND status = $3 AND latitude IS NOT NULL AND longitude IS NOT NULL
-       AND SQRT(POWER(latitude - $1, 2) + POWER(longitude - $2, 2)) <= $4
+       AND (${hav}) <= $4
        ORDER BY distance LIMIT $5 OFFSET $6`,
       [lat, lng, 'active', radiusKm, pageSize, offset]
     );

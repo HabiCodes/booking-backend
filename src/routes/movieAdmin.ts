@@ -4,6 +4,7 @@ import {
   publishMovie, archiveMovie,
   listAdminCinemas, createCinema, updateCinema, deleteCinema, toggleCinema,
   createScreen, updateScreen, deleteScreen,
+  getScreenWithLayout, listScreenLayoutVersions, setScreenCurrentLayout, createScreenLayoutVersion, syncScreenLayout,
   listAdminShowtimes, createShowtime, updateShowtime, deleteShowtime,
   getShowtimesForCinema, getShowtimesForMovie, getShowtimeSummary,
   listPriceCaps, createPriceCap, updatePriceCap, deletePriceCap,
@@ -42,6 +43,14 @@ adminMovieRouter.post('/cinemas/:cinemaId/screens', requirePermission('movies:wr
 adminMovieRouter.put('/screens/:screenId', requirePermission('movies:write'), auditMiddleware('screen.update'), updateScreen);
 adminMovieRouter.patch('/screens/:screenId', requirePermission('movies:write'), auditMiddleware('screen.update'), updateScreen);
 adminMovieRouter.delete('/screens/:screenId', requirePermission('movies:delete'), auditMiddleware('screen.delete'), deleteScreen);
+
+// ── Screen Layout Versions ─────────────────────────────────────────────────────
+
+adminMovieRouter.get('/screens/:screenId/layout', requirePermission('movies:read'), getScreenWithLayout);
+adminMovieRouter.get('/screens/:screenId/layout/versions', requirePermission('movies:read'), listScreenLayoutVersions);
+adminMovieRouter.patch('/screens/:screenId/layout/versions/:versionId/current', requirePermission('movies:write'), auditMiddleware('layout_version.set_current'), setScreenCurrentLayout);
+adminMovieRouter.post('/screens/:screenId/layout/versions', requirePermission('movies:write'), auditMiddleware('layout_version.create'), createScreenLayoutVersion);
+adminMovieRouter.post('/screens/:screenId/layout/sync', requirePermission('movies:write'), auditMiddleware('screen.layout_sync'), syncScreenLayout);
 
 // ── Showtimes (admin) ─────────────────────────────────────────────────────────
 

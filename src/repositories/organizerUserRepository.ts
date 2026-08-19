@@ -17,6 +17,14 @@ export class OrganizerUserRepository {
     return (rows as unknown as OrganizerUserRow[])[0] || null;
   }
 
+  async findByEmailAndOrg(email: string, organizationId: number): Promise<OrganizerUserRow | null> {
+    const { rows } = await getPool().query(
+      'SELECT * FROM organizer_users WHERE LOWER(email) = LOWER($1) AND organization_id = $2 LIMIT 1',
+      [email, organizationId]
+    );
+    return (rows as unknown as OrganizerUserRow[])[0] || null;
+  }
+
   async findByOrganization(organizationId: number): Promise<OrganizerUserRow[]> {
     const { rows } = await getPool().query('SELECT * FROM organizer_users WHERE organization_id = $1 ORDER BY role DESC, created_at ASC', [organizationId]);
     return rows as unknown as OrganizerUserRow[];

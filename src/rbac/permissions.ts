@@ -29,6 +29,14 @@ export const PERMISSIONS: readonly AdminPermission[] = [
   'organizer:profile:read', 'organizer:profile:write',
   'organizer:banking:read', 'organizer:banking:write',
   'organizer:payments:read', 'organizer:payments:write', 'organizer:payments:refund',
+
+  // Movie-specific organizer permissions
+  'organizer:movies:read', 'organizer:movies:write', 'organizer:movies:delete', 'organizer:movies:publish',
+  'organizer:cinemas:read', 'organizer:cinemas:write', 'organizer:cinemas:delete',
+  'organizer:showtimes:read', 'organizer:showtimes:write', 'organizer:showtimes:delete',
+  'organizer:screens:read', 'organizer:screens:write', 'organizer:screens:delete',
+  'organizer:scanners:read', 'organizer:scanners:write', 'organizer:scanners:delete',
+  'organizer:price_caps:read', 'organizer:price_caps:write', 'organizer:price_caps:delete',
 ];
 
 export const ROLE_DEFAULTS: Record<string, Set<AdminPermission>> = {

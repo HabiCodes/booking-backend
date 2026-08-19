@@ -89,6 +89,29 @@ export class CinemaScreenRepository {
     );
   }
 
+  async findAll(query: { cinemaId?: number; page?: number; pageSize?: number; includeInactive?: boolean } = {}): Promise<{ items: CinemaScreenRow[]; total: number; page: number; pageSize: number; totalPages: number }> {
+    const page = query.page || 1;
+    const pageSize = Math.min(query.pageSize || 25, 100);
+    const offset = (page - 1) * pageSize;
+    const whereClauses: string[] = [];
+    const params: unknown[] = [];
+    let idx = 1;
+
+    if (query.cinemaId) { whereClauses.push(`cinema_id = $${idx++}`); params.push(query.cinemaId); }
+    if (!query.includeInactive) { whereClauses.push('is_active = true'); }
+
+    const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+    const { rows: countRows } = await getPool().query(
+      `SELECT COUNT(*) as total FROM cinema_screens ${where}`, params
+    );
+    const total = Number((countRows as Array<{ total: number | string }>)[0]?.total ?? 0);
+    const { rows } = await getPool().query(
+      `SELECT * FROM cinema_screens ${where} ORDER BY cinema_id, screen_number LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, pageSize, offset]
+    );
+    return { items: rows as unknown as CinemaScreenRow[], total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
+  }
+
   async softDelete(id: number): Promise<void> {
     await getPool().query('UPDATE cinema_screens SET is_active = false, updated_at = NOW() WHERE id = $1', [id]);
   }

@@ -1,6 +1,7 @@
-import { Router, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import { getPool, closePool } from '../db/pool';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 
 interface HealthResponse {
   status: 'ok' | 'degraded' | 'error';
@@ -16,7 +17,7 @@ function respond(res: Response, payload: HealthResponse, httpStatus: number): vo
 
 // ── Liveness: process is alive ───────────────────────────────────────────────
 
-export function liveness(_req: unknown, res: Response): void {
+export function liveness(_req: Request, res: Response): void {
   respond(res, {
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -26,7 +27,7 @@ export function liveness(_req: unknown, res: Response): void {
 
 // ── Readiness: all subsystems reachable ─────────────────────────────────────
 
-export async function readiness(_req: unknown, res: Response): Promise<void> {
+export async function readiness(_req: Request, res: Response): Promise<void> {
   const checks: Record<string, unknown> = {};
   let overallStatus: HealthResponse['status'] = 'ok';
 
@@ -55,16 +56,53 @@ export async function readiness(_req: unknown, res: Response): Promise<void> {
 }
 
 // ── Shutdown: graceful drain ─────────────────────────────────────────────────
+//
+// CRITICAL: This endpoint must NEVER be public. It is only reachable when a
+// shared secret is presented in the `X-Shutdown-Key` header. The secret is
+// configured via the `SHUTDOWN_KEY` env var (auto-generated via `openssl rand
+// -hex 32` at deploy time). If unset, the endpoint is disabled entirely.
+//
+// Why: Without auth, anyone with network access could shut down the service.
 
-export async function shutdown(_req: unknown, res: Response): Promise<void> {
-  logger.info('Shutdown endpoint called — closing connections');
-  try {
-    await closePool();
-  } catch (err) {
-    logger.warn('Error closing pool during shutdown', { error: (err as Error).message });
+const SHUTDOWN_HEADER = 'x-shutdown-key';
+
+function isShutdownAuthorized(req: Request): boolean {
+  const configuredKey = process.env.SHUTDOWN_KEY;
+  if (!configuredKey || configuredKey.length < 16) {
+    return false;
   }
+  const presented = req.headers[SHUTDOWN_HEADER];
+  if (typeof presented !== 'string' || presented.length === 0) {
+    return false;
+  }
+  // Constant-time comparison to prevent timing attacks
+  if (presented.length !== configuredKey.length) {
+    return false;
+  }
+  let mismatch = 0;
+  for (let i = 0; i < presented.length; i++) {
+    mismatch |= presented.charCodeAt(i) ^ configuredKey.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+export async function shutdown(req: Request, res: Response): Promise<void> {
+  if (!isShutdownAuthorized(req)) {
+    logger.warn('Unauthorized shutdown attempt blocked', { ip: req.ip });
+    res.status(404).json({ success: false, message: 'Not found' });
+    return;
+  }
+
+  logger.info('Authorized shutdown endpoint called — closing connections');
   res.status(200).json({ status: 'shutting_down', timestamp: new Date().toISOString() });
-  process.exit(0);
+
+  // Close pool asynchronously so the response can flush
+  closePool()
+    .catch((err) => logger.warn('Error closing pool during shutdown', { error: (err as Error).message }))
+    .finally(() => {
+      // Allow a moment for the response to flush
+      setTimeout(() => process.exit(0), 100);
+    });
 }
 
 const router = Router();
