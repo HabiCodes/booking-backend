@@ -152,7 +152,7 @@ export class MovieManagerService {
 
   async createMovie(organizationId: number, input: Record<string, unknown>): Promise<MoviePublic> {
     const { rows } = await getPool().query(
-      `INSERT INTO movies (title, original_title, slug, synopsis, genre, language, duration_minutes, cast, director, poster_url, backdrop_url, trailer_url, rating, censor_rating, release_date, status, organization_id, is_featured, metadata)
+      `INSERT INTO movies (title, original_title, slug, synopsis, genre, language, duration_minutes, "cast", director, poster_url, backdrop_url, trailer_url, rating, censor_rating, release_date, status, organization_id, is_featured, metadata)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
       [
         input.title || 'Untitled',
@@ -194,7 +194,7 @@ export class MovieManagerService {
     if (input.genre !== undefined) { sets.push(`genre = $${idx++}`); params.push(input.genre); }
     if (input.language !== undefined) { sets.push(`language = $${idx++}`); params.push(input.language); }
     if (input.durationMinutes !== undefined || input.duration_minutes !== undefined) { sets.push(`duration_minutes = $${idx++}`); params.push(input.durationMinutes ?? input.duration_minutes); }
-    if (input.cast !== undefined) { sets.push(`cast = $${idx++}`); params.push(input.cast); }
+    if (input.cast !== undefined) { sets.push(`"cast" = $${idx++}`); params.push(input.cast); }
     if (input.director !== undefined) { sets.push(`director = $${idx++}`); params.push(input.director); }
     if (input.posterUrl !== undefined) { sets.push(`poster_url = $${idx++}`); params.push(input.posterUrl); }
     if (input.backdropUrl !== undefined) { sets.push(`backdrop_url = $${idx++}`); params.push(input.backdropUrl); }

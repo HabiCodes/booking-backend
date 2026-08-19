@@ -146,7 +146,7 @@ export class LayoutVersionService {
     await pool.query('DELETE FROM layout_version_seats WHERE layout_version_id = $1', [layoutVersionId]);
 
     const screenSeats = await pool.query(
-      'SELECT row_label, seat_number, seat_type, seat_category, x_position, y_position, is_available FROM cinema_seats WHERE screen_id = $1 AND deleted_at IS NULL',
+      'SELECT row_label, seat_number, seat_type, seat_category, x_position, y_position, is_available FROM cinema_seats WHERE screen_id = $1 AND is_available = true',
       [screenId]
     );
 

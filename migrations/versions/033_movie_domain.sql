@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS movies (
   genre             VARCHAR(100)[] DEFAULT '{}',
   language          VARCHAR(50) NOT NULL DEFAULT 'Tamil',
   duration_minutes  INTEGER,
-  cast              TEXT[] DEFAULT '{}',
+  "cast"             TEXT[] DEFAULT '{}',
   director          VARCHAR(255),
   poster_url        VARCHAR(500),
   backdrop_url      VARCHAR(500),
@@ -235,11 +235,9 @@ CREATE INDEX IF NOT EXISTS idx_movie_booking_items_seat   ON movie_booking_items
 CREATE INDEX IF NOT EXISTS idx_movie_booking_items_showtime ON movie_booking_items (showtime_id);
 
 -- Prevent double-booking of the same seat+showtime via active bookings
-CREATE UNIQUE INDEX IF NOT EXISTS idx_movie_booking_items_seat_showtime_active
-  ON movie_booking_items (seat_id, showtime_id)
-  WHERE booking_id IN (
-    SELECT id FROM movie_bookings WHERE status IN ('pending_payment', 'confirmed') AND deleted_at IS NULL
-  );
+-- NOTE: The valid partial unique index is created in migration 038 using a
+-- denormalized booking_status column (PostgreSQL does not allow subqueries
+-- in partial index predicates, so the cross-table check must be deferred).
 
 
 -- ============================================================================

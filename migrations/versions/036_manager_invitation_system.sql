@@ -58,12 +58,7 @@ CREATE TABLE IF NOT EXISTS organizer_invitations (
 
   -- Timestamps
   created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-  updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-
-  -- Ensure one pending invite per email per organization
-  CONSTRAINT uq_organizer_invitations_org_email_pending
-    UNIQUE (organization_id, email)
-    WHERE status = 'pending'
+  updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_organizer_invitations_org
@@ -78,6 +73,13 @@ CREATE INDEX IF NOT EXISTS idx_organizer_invitations_token
 
 CREATE INDEX IF NOT EXISTS idx_organizer_invitations_expires
   ON organizer_invitations (expires_at)
+  WHERE status = 'pending';
+
+-- Ensure one pending invite per email per organization (partial unique index)
+-- NOTE: Cannot be an inline table constraint — PostgreSQL partial unique indexes
+-- must be created as standalone CREATE UNIQUE INDEX statements.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_organizer_invitations_org_email_pending
+  ON organizer_invitations (organization_id, email)
   WHERE status = 'pending';
 
 -- Auto-update updated_at

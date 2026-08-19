@@ -168,7 +168,7 @@ export class MovieRepository {
   async create(input: MovieCreateInput & { organization_id?: number }): Promise<MovieRow> {
     const slug = input.slug || generateSlug(input.title);
     const { rows } = await getPool().query(
-      `INSERT INTO movies (title, original_title, slug, synopsis, genre, language, duration_minutes, cast, director, poster_url, backdrop_url, trailer_url, rating, censor_rating, release_date, status, organization_id, is_featured, metadata)
+      `INSERT INTO movies (title, original_title, slug, synopsis, genre, language, duration_minutes, "cast", director, poster_url, backdrop_url, trailer_url, rating, censor_rating, release_date, status, organization_id, is_featured, metadata)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING *`,
       [
@@ -223,7 +223,8 @@ export class MovieRepository {
 
     for (const [key, value] of Object.entries(map)) {
       if (value[1] !== undefined) {
-        sets.push(`${key[0] === key[0].toLowerCase() ? key : key.toLowerCase()} = $${idx++}`);
+        const col = value[0] === 'cast' ? '"cast"' : value[0];
+        sets.push(`${col} = $${idx++}`);
         params.push(value[1]);
       }
     }

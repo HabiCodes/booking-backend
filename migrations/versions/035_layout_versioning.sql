@@ -75,7 +75,7 @@ BEGIN
     SELECT cs.id, cs.row_labels, cs.seats_per_row, cs.seat_start_number,
            cs.seat_types, cs.pricing_rules, cs.seat_capacity
     FROM cinema_screens cs
-    WHERE cs.deleted_at IS NULL
+    WHERE cs.is_active = true
       AND NOT EXISTS (SELECT 1 FROM layout_versions lv WHERE lv.screen_id = cs.id)
   LOOP
     version_num := COALESCE(
@@ -99,7 +99,7 @@ BEGIN
       SELECT cs2.row_label, cs2.seat_number, cs2.seat_type, cs2.seat_category,
              cs2.x_position, cs2.y_position, cs2.is_available
       FROM cinema_seats cs2
-      WHERE cs2.screen_id = screen_rec.id AND cs2.deleted_at IS NULL
+      WHERE cs2.screen_id = screen_rec.id AND cs2.is_available = true
     LOOP
       INSERT INTO layout_version_seats
         (layout_version_id, row_label, seat_number, seat_type, seat_category,
