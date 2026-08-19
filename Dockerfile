@@ -26,6 +26,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 # Copy built assets
 COPY --from=deps --chown=express:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=express:nodejs /app/dist ./dist
+COPY --from=builder --chown=express:nodejs /app/migrations ./migrations
 COPY package.json ./
 
 # Upload directories (bind-mountable in docker-compose)
