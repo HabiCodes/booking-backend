@@ -69,11 +69,12 @@ export class PaymentService {
       metadata: { organization_id: organizationId, event_id: input.event_id, ...input.metadata },
     });
 
-    // 4) Persist to DB
+    // 4) Persist to DB — include movie_id so booking_type resolves correctly
     const order = await paymentOrderRepository.create({
       booking_id: input.booking_id,
       organization_id: organizationId,
       event_id: input.event_id ?? null,
+      movie_id: (input as any).movie_id ?? null,
       amount: input.amount,
       currency: input.currency || 'INR',
       order_id: input.orderId,

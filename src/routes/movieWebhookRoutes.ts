@@ -15,11 +15,9 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { AppError } from '../middleware/errorHandler';
 import { movieBookingRepository } from '../repositories/movieBookingRepository';
-import { movieBookingItemRepository } from '../repositories/movieBookingItemRepository';
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
 import { webhookEventRepository } from '../repositories/webhookEventRepository';
 import { movieBookingService } from '../services/movieBookingService';
-import { showtimeRepository } from '../repositories/showtimeRepository';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
@@ -141,17 +139,19 @@ router.post('/cashfree', async (req: any, res: any, next: any): Promise<void> =>
       processed = true;
 
     } else if (newStatus === 'FAILED' || newStatus === 'CANCELLED' || newStatus === 'EXPIRED') {
-      // Payment failed — cancel the pending booking
+      // Payment failed — cancel the pending booking via the service layer
+      // so all cleanup (seat release, item deletion, ticket revocation,
+      // Redis hold eviction, audit log) runs inside a single transaction.
       const paymentOrder = await paymentOrderRepository.findByOrderId(orderId);
       if (paymentOrder) {
         const booking = await movieBookingRepository.findById(paymentOrder.booking_id);
         if (booking && booking.status === 'pending_payment') {
-          await movieBookingRepository.updateStatus(booking.id, 'cancelled');
-          // Release seats back
-          const items = await movieBookingItemRepository.findByBooking(booking.id);
-          if (items.length > 0) {
-            await showtimeRepository.updateAvailableSeats(booking.showtime_id, items.length);
-          }
+          await movieBookingService.cancelBooking(
+            booking.id,
+            booking.user_id,
+            'Payment failed via Cashfree webhook',
+            { actorId: 0, actorType: 'cashfree_webhook' }
+          );
           logger.info(`[MovieWebhook] Booking cancelled via webhook: ${booking.booking_reference}`);
         }
       }

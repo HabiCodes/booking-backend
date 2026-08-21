@@ -513,6 +513,93 @@ function makeRequest(
   });
 }
 
+// ── Seed test auth accounts into the database ───────────────────────────────────
+// The integration tests use real Express middleware that queries the DB for
+// admin/organizer is_active status.  These seeds are idempotent.
+
+async function seedTestAccounts(): Promise<void> {
+  let pool;
+  try {
+    pool = (await import('../../src/db/pool')).getPool();
+    // Quick connectivity check — if pool can't reach the DB, skip seeding.
+    // Unit tests that don't touch the DB will still pass.
+    await pool.query('SELECT 1');
+  } catch {
+    console.log('[seed] Database not available — skipping test data seed (unit tests only)');
+    return;
+  }
+
+  // ── Admin (id=1) — required by adminAuthMiddleware tests ──
+  let adminResult;
+  try {
+    adminResult = await pool.query(
+      `INSERT INTO admins (id, email, password_hash, name, role, is_active, permissions_updated_at)
+       VALUES (1, 'admin@test.com', crypt('testpass123', gen_salt('bf')), 'Test Admin', 'super_admin', true, NOW())
+       ON CONFLICT (id) DO UPDATE SET is_active = true, email = EXCLUDED.email, role = EXCLUDED.role`,
+    );
+  } catch (err) {
+    throw new Error(`[seed] Failed to insert admin: ${(err as Error).message}`);
+  }
+  console.log(`[seed] admin inserted/updated: rowCount=${adminResult.rowCount}`);
+
+  // ── Organization (id=1) — required by organizer_users FK ──
+  let orgResult;
+  try {
+    orgResult = await pool.query(
+      `INSERT INTO organizations (id, name, display_name, slug, is_active)
+       VALUES (1, 'Test Org', 'Test Organization', 'test-org', true)
+       ON CONFLICT (id) DO UPDATE SET is_active = true`,
+    );
+  } catch (err) {
+    throw new Error(`[seed] Failed to insert organization: ${(err as Error).message}`);
+  }
+
+  // ── Organizer users (id=2, 3) — required by organizerAuthMiddleware tests ──
+  let organizerResult;
+  try {
+    organizerResult = await pool.query(
+      `INSERT INTO organizer_users (id, organization_id, email, password_hash, name, role, permissions, is_active)
+       VALUES
+         (2, 1, 'owner@test.com', crypt('testpass123', gen_salt('bf')), 'Test Owner', 'owner', '{}', true),
+         (3, 1, 'org@example.com', crypt('testpass123', gen_salt('bf')), 'Test Org', 'owner', '{}', true)
+       ON CONFLICT (id) DO UPDATE SET
+         is_active = true,
+         organization_id = EXCLUDED.organization_id,
+         email = EXCLUDED.email,
+         name = EXCLUDED.name`,
+    );
+  } catch (err) {
+    throw new Error(`[seed] Failed to insert organizer users: ${(err as Error).message}`);
+  }
+  console.log(`[seed] organizer_users inserted/updated: rowCount=${organizerResult.rowCount}`);
+
+  // ── Verify: if any seed failed, fail the test loudly ──
+  const verifyAdmin = await pool.query('SELECT id, email, is_active FROM admins WHERE id = $1', [1]);
+  const verifyOrg = await pool.query('SELECT id, name, is_active FROM organizations WHERE id = $1', [1]);
+  const verifyOrgUsers = await pool.query('SELECT id, email, is_active FROM organizer_users WHERE id IN ($1, $2)', [2, 3]);
+
+  if (verifyAdmin.rowCount === 0) throw new Error('[seed] FAILED: admin id=1 not found after seed');
+  if (verifyOrg.rowCount === 0) throw new Error('[seed] FAILED: organization id=1 not found after seed');
+  if (verifyOrgUsers.rowCount < 2) throw new Error(`[seed] FAILED: only ${verifyOrgUsers.rowCount} organizer users found (expected 2)`);
+
+  const adminRow = verifyAdmin.rows[0];
+  const orgRow = verifyOrg.rows[0];
+  const orgUserRows = verifyOrgUsers.rows as Array<{ id: number; email: string; is_active: boolean }>;
+
+  if (!adminRow.is_active) throw new Error('[seed] FAILED: admin id=1 is_active=false');
+  if (!orgRow.is_active) throw new Error('[seed] FAILED: organization id=1 is_active=false');
+
+  for (const ou of orgUserRows) {
+    if (!ou.is_active) throw new Error(`[seed] FAILED: organizer_user id=${ou.id} (${ou.email}) is_active=false`);
+  }
+
+  console.log('[seed] All accounts verified active:', {
+    admin: adminRow.email,
+    org: orgRow.name,
+    organizers: orgUserRows.map((r) => `${r.id}:${r.email}`).join(', '),
+  });
+}
+
 before(async () => {
   // Minimal app: only auth middleware + error handler + protected routes
   intApp = express();
@@ -531,6 +618,9 @@ before(async () => {
 
   // Global error handler must be LAST
   intApp.use(errorHandler);
+
+  // Seed DB records before starting the server
+  await seedTestAccounts();
 
   await new Promise<void>((resolve) => {
     intServer = intApp.listen(0, '127.0.0.1');

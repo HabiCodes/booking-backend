@@ -49,7 +49,7 @@ export class AdminService {
    */
   async login(email: string, password: string) {
     const { rows } = await getPool().query(
-      `SELECT id, email, password_hash, name, role, is_active, last_login_at, permissions
+      `SELECT id, email, password_hash, name, role, is_active, last_login_at, permissions, permissions_updated_at
        FROM admins WHERE email = $1 LIMIT 1`,
       [email.toLowerCase().trim()]
     );
@@ -128,7 +128,7 @@ export class AdminService {
 
   async listAll(limit: number = 50, offset: number = 0): Promise<AdminRow[]> {
     const { rows } = await getPool().query(
-      `SELECT id, email, name, role, is_active, last_login_at, permissions, created_at
+      `SELECT id, email, name, role, is_active, last_login_at, permissions, permissions_updated_at, created_at
        FROM admins
        ORDER BY id ASC
        LIMIT $1 OFFSET $2`,
@@ -139,7 +139,7 @@ export class AdminService {
 
   async findById(id: number): Promise<AdminRow | null> {
     const { rows } = await getPool().query(
-      `SELECT id, email, name, role, is_active, last_login_at, permissions, created_at
+      `SELECT id, email, name, role, is_active, last_login_at, permissions, permissions_updated_at, created_at
        FROM admins WHERE id = $1 LIMIT 1`,
       [id]
     );

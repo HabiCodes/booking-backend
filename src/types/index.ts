@@ -336,6 +336,7 @@ export interface AdminRow {
   is_active: boolean;
   last_login_at: string | null;
   permissions: Record<string, boolean>;
+  permissions_updated_at: string | null;
   created_at: string;
 }
 

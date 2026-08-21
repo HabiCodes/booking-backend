@@ -34,11 +34,10 @@ import { turfCustomerRoutes } from './routes/turfRoutes';
 import { turfOrganizerRoutes } from './routes/turfOrganizerRoutes';
 import { turfAdminRoutes } from './routes/turfAdminRoutes';
 import { turfPaymentRoutes } from './routes/turfPaymentRoutes';
-import { turfWebhookRoutes } from './routes/turfWebhookRoutes';
+import { unifiedWebhookRoutes } from './routes/unifiedWebhookRoutes';
 import { turfManagerRoutes } from './routes/turfManagerRoutes';
 import { startAvailabilityScheduler } from './services/turfAvailabilityScheduler';
 import { movieRoutes } from './routes/movies';
-import { movieWebhookRoutes } from './routes/movieWebhookRoutes';
 import { movieScanRoutes } from './routes/movieScanRoutes';
 import { adminMovieRouter } from './routes/movieAdmin';
 import { layoutVersionRoutes } from './routes/layoutVersionRoutes';
@@ -76,7 +75,7 @@ app.use(compression());
 // Raw body capture must happen BEFORE JSON parsing so webhook signature
 // verification can use the exact original bytes.
 app.use((req, res, next) => {
-  if (req.method === 'POST' && (req.path.startsWith('/turf/webhooks/') || req.path.startsWith('/movies/webhooks/'))) {
+  if (req.method === 'POST' && req.path.startsWith('/webhooks/')) {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
@@ -133,7 +132,7 @@ apiV1.use('/turf/admin', turfAdminRoutes);
 apiV1.use('/turf/organizer', turfOrganizerRoutes);
 apiV1.use('/turf/manager', turfManagerRoutes);
 apiV1.use('/turf/payments', turfPaymentRoutes);
-apiV1.use('/turf/webhooks', turfWebhookRoutes);
+apiV1.use('/webhooks', unifiedWebhookRoutes);
 apiV1.use('/turf', turfCustomerRoutes);
 apiV1.use('/owner', ownerDashboardRoutes);
 apiV1.use('/owner', ownerManagerRoutes);
@@ -149,7 +148,6 @@ apiV1.use('/organizer/events', organizerEventRoutes);
 apiV1.use('/organizer/organizations', organizerOrganizationRoutes);
 apiV1.use('/organizer/applications', organizerApplicationRoutes);
 apiV1.use('/movies', movieRoutes);
-apiV1.use('/movies/webhooks', movieWebhookRoutes);
 apiV1.use('/admin/movies', adminMovieRouter);
 apiV1.use('/admin/layout-versions', layoutVersionRoutes);
 apiV1.use('/owner/invitations', organizerInvitationRoutes.owner);
@@ -167,7 +165,7 @@ app.use('/api/turf/admin', turfAdminRoutes);
 app.use('/api/turf/organizer', turfOrganizerRoutes);
 app.use('/api/turf/manager', turfManagerRoutes);
 app.use('/api/turf/payments', turfPaymentRoutes);
-app.use('/api/turf/webhooks', turfWebhookRoutes);
+app.use('/api/webhooks', unifiedWebhookRoutes);
 app.use('/api/turf', turfCustomerRoutes);
 app.use('/api/owner', ownerDashboardRoutes);
 app.use('/api/owner', ownerManagerRoutes);
@@ -180,7 +178,6 @@ app.use('/api/organizer/events', organizerEventRoutes);
 app.use('/api/organizer/organizations', organizerOrganizationRoutes);
 app.use('/api/organizer/applications', organizerApplicationRoutes);
 app.use('/api/movies', movieRoutes);
-app.use('/api/movies/webhooks', movieWebhookRoutes);
 app.use('/api/admin/movies', adminMovieRouter);
 app.use('/api/admin/layout-versions', layoutVersionRoutes);
 app.use('/api/organizer/movies', organizerMovieRouter);

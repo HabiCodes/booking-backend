@@ -6,7 +6,7 @@ services:
     rootDir: backend
     buildCommand: npm install && npm run build
     startCommand: npm start
-    healthCheckPath: /health
+    healthCheckPath: /health/live
     autoDeploy: true
     envVars:
       - key: NODE_ENV
@@ -39,6 +39,20 @@ services:
         sync: false
       - key: CASHFREE_WEBHOOK_SECRET
         sync: false
+      - key: CASHFREE_RETURN_URL
+        sync: false
+      - key: CASHFREE_NOTIFY_URL
+        sync: false
+      - key: HOSTINGER_API_TOKEN
+        sync: false
+      - key: HOSTINGER_MAILBOX_ID
+        sync: false
+      - key: EMAIL_FROM
+        value: info@bigmembres.in
+      - key: APP_URL
+        sync: false
+      - key: LOG_FILE_ENABLED
+        value: "false"
       - key: DB_RUN_MIGRATIONS
         value: true
 

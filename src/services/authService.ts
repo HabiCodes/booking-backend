@@ -820,12 +820,14 @@ export class AuthService {
     const refreshToken = generateRefreshToken(userId, email);
     const expiresIn = config.jwt.expiresIn;
 
-    // Persist refresh token hash (async — don't block token issuance)
+    // Persist refresh token hash (fire-and-forget — don't block token issuance).
+    // Errors are logged but never surface to the client; a missing DB row for a
+    // still-valid JWT is a recoverable inconsistency handled by cleanup jobs.
     const tokenHash = hashToken(refreshToken);
     const tokenExpiry = new Date(Date.now() + 30 * 24 * 3600_000).toISOString();
-    authRepository.createRefreshToken(userId, tokenHash, sessionId ?? null, null, null, tokenExpiry).catch((err) =>
-      logger.warn('Failed to persist refresh token:', err)
-    );
+    authRepository
+      .createRefreshToken(userId, tokenHash, sessionId ?? null, null, null, tokenExpiry)
+      .catch((err) => logger.warn('Failed to persist refresh token:', err));
 
     return { accessToken, refreshToken, expiresIn };
   }

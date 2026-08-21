@@ -120,7 +120,7 @@ export const config = {
     secretKey: process.env.CASHFREE_SECRET_KEY || '',
     webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || '',
     returnUrl: process.env.CASHFREE_RETURN_URL || 'http://localhost:3001',
-    notifyUrl: process.env.CASHFREE_NOTIFY_URL || 'http://localhost:4000/api/webhooks/cashfree',
+    notifyUrl: process.env.CASHFREE_NOTIFY_URL || '',
   },
 
   // ── Redis ─────────────────────────────────────────────────────────────────────

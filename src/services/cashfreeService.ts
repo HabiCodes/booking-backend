@@ -60,8 +60,13 @@ export class CashfreePaymentGateway implements IPaymentGateway {
         customer_phone: input.customerPhone,
       },
       order_meta: {
+        // return_url: browser redirect after payment — path appended to the app base
         return_url: `${this.config.returnUrl || 'http://localhost:3001'}/booking/${input.bookingId}/success`,
-        notify_url: `${this.config.notifyUrl || 'http://localhost:3001'}/api/webhooks/cashfree`,
+        // notify_url: full webhook URL from CASHFREE_NOTIFY_URL env var.
+        // Only included when set — Cashfree falls back to their dashboard-configured
+        // webhook URL when absent. The value should be the deployed endpoint, e.g.
+        // https://your-app.onrender.com/api/v1/turf/webhooks/cashfree
+        ...(this.config.notifyUrl ? { notify_url: this.config.notifyUrl } : {}),
         ...input.metadata,
       },
     };
