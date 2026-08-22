@@ -194,6 +194,14 @@ app.use(notFoundHandler);
 
 app.use(errorHandler);
 
+// ── Start server FIRST (Hostinger requires listen() immediately) ──────────────
+
+server.listen(config.port, () => {
+  logger.info(`Server running on port ${config.port} (${config.nodeEnv})`);
+  logger.info(`API v1:  /api/v1`);
+  logger.info(`Legacy:  /api  (deprecated)`);
+});
+
 // ── Initialize ────────────────────────────────────────────────────────────────
 
 async function start() {
@@ -251,13 +259,6 @@ async function start() {
 
     // Ensure upload directories exist
     ensureUploadDirs();
-
-    // Start server
-    server.listen(config.port, () => {
-      logger.info(`Server running on port ${config.port} (${config.nodeEnv})`);
-      logger.info(`API v1:  /api/v1`);
-      logger.info(`Legacy:  /api  (deprecated)`);
-    });
   } catch (err) {
     logger.error('Failed to start server:', err as Error);
     process.exit(1);
