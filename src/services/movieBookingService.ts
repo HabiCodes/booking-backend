@@ -28,6 +28,8 @@ import type {
   MovieBookingRow,
   MovieBookingWithDetails,
   MovieBookingItemRow,
+  MovieTicketRow,
+  MovieRow,
   MovieSeatPrice,
   MovieBookingCreateInput,
   CinemaRow,
@@ -971,6 +973,32 @@ export class MovieBookingService {
         capReason,
       };
     });
+  }
+
+  async searchMovies(query: string, page = 1, pageSize = 20): Promise<{
+    items: any[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  }> {
+    const q = query.trim();
+    if (q.length < 2) {
+      return { items: [], total: 0, page, pageSize, totalPages: 0 };
+    }
+    const result = await movieRepository.search({
+      q,
+      status: 'now_showing',
+      page,
+      pageSize: Math.min(pageSize, 100),
+    });
+    return {
+      items: result.items,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      totalPages: result.totalPages,
+    };
   }
 
   /**

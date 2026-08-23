@@ -238,6 +238,34 @@ export async function getMe(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) throw new AppError('Unauthorized', 401);
+
+    const { username } = req.body;
+
+    if (username !== undefined) {
+      if (typeof username !== 'string') {
+        throw new AppError('Username must be a string', 400);
+      }
+      if (username.length > 50) {
+        throw new AppError('Username must be under 50 characters', 400);
+      }
+    }
+
+    const user = await userRepository.updateProfile(userId, {
+      username: username ?? undefined,
+    });
+
+    if (!user) throw new AppError('User not found', 404);
+
+    res.json({ success: true, data: user });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function changePassword(req: Request, res: Response, next: NextFunction) {
   try {
     const userId = (req as any).user?.id;

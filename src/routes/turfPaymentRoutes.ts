@@ -9,7 +9,6 @@ import { AppError } from '../middleware/errorHandler';
 import { turfBookingRepository } from '../repositories/turfBookingRepository';
 import { PaymentService, createPaymentService } from '../services/paymentService';
 import { turfBookingService } from '../services/turfBookingService';
-import { turfSettlementRepository } from '../repositories/turfSettlementRepository';
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
 import { webhookEventRepository } from '../repositories/webhookEventRepository';
 import { logger } from '../utils/logger';

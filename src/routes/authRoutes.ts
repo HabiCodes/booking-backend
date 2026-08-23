@@ -17,6 +17,7 @@ import {
   getMe,
   verifyRegistrationOtp,
   resendRegistrationOtp,
+  updateProfile,
 } from '../controllers/authController';
 import { authMiddleware } from '../middleware/auth';
 import { authRateLimiter, resendVerificationLimiter, otpVerifyLimiter } from '../middleware/rateLimiter';
@@ -38,15 +39,16 @@ router.post('/resend-verification', resendVerificationLimiter, resendVerificatio
 router.post('/register-otp', authRateLimiter, registerEnhanced);
 router.post('/verify-registration-otp', otpVerifyLimiter, verifyRegistrationOtp);
 router.post('/resend-registration-otp', resendVerificationLimiter, resendRegistrationOtp);
-router.post('/refresh-token', refreshToken);
-router.post('/logout', logout);
-router.post('/logout-all', authMiddleware, logoutAll);
+router.post('/refresh-token', authRateLimiter, refreshToken);
+router.post('/logout', authRateLimiter, logout);
+router.post('/logout-all', authMiddleware, authRateLimiter, logoutAll);
 
 router.post('/forgot-password', authRateLimiter, forgotPassword);
 router.post('/reset-password', authRateLimiter, resetPassword);
 
-router.post('/change-password', authMiddleware, changePassword);
+router.post('/change-password', authMiddleware, authRateLimiter, changePassword);
 
+router.patch('/me', authMiddleware, updateProfile);
 router.get('/me', authMiddleware, getMe);
 
 // Sessions

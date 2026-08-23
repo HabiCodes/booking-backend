@@ -10,6 +10,8 @@ import { turfReviewRepository } from '../repositories/turfReviewRepository';
 import { turfBookingService } from '../services/turfBookingService';
 import { turfBookingRepository } from '../repositories/turfBookingRepository';
 import { availabilityEngine } from '../services/turfAvailabilityEngine';
+import { bookingRateLimiter, couponRateLimiter } from '../middleware/rateLimiter';
+import { sanitizeString } from '../middleware/validator';
 
 const router = Router();
 
@@ -17,8 +19,23 @@ const router = Router();
 
 router.get('/grounds', async (req, res, next) => {
   try {
-    const result = await turfVenueService.findPublic(req.query as any);
-    res.json({ success: true, data: result });
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 25;
+    const result = await turfVenueService.findPublic({
+      ...req.query as any,
+      page,
+      pageSize: Math.min(pageSize, 100),
+    });
+    res.json({
+      success: true,
+      data: result.items,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        pageSize: result.pageSize,
+        totalPages: result.totalPages,
+      },
+    });
   } catch (err) { next(err); }
 });
 
@@ -73,7 +90,7 @@ router.get('/resources/:resourceId/availability', async (req, res, next) => {
 
 router.use(authMiddleware);
 
-router.post('/bookings', async (req, res, next) => {
+router.post('/bookings', bookingRateLimiter, async (req, res, next) => {
   try {
     const userId = (req as any).user?.id;
     if (!userId) throw new AppError('Unauthorized', 401);
@@ -127,7 +144,12 @@ router.post('/my/bookings/:bookingId/review', async (req, res, next) => {
     if (booking.status !== 'confirmed' && booking.status !== 'completed' && booking.status !== 'checked_in') {
       throw new AppError('Can only review after booking', 400);
     }
-    const result = await turfBookingService.createReview(userId, booking.venue_id, bookingId, rating, review);
+    // Sanitize review text to prevent XSS
+    const sanitizedReview = review ? sanitizeString(review) : null;
+    if (sanitizedReview && sanitizedReview.length > 2000) {
+      throw new AppError('Review must be under 2000 characters', 400);
+    }
+    const result = await turfBookingService.createReview(userId, booking.venue_id, bookingId, rating, sanitizedReview);
     res.status(201).json({ success: true, data: result });
   } catch (err) { next(err); }
 });

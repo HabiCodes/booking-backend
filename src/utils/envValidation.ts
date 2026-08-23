@@ -21,34 +21,40 @@ type ValidationRule = {
 };
 
 const PRODUCTION_REQUIRED: ValidationRule[] = [
-  { key: 'JWT_SECRET', required: true, hint: 'A long random string — used to sign user JWTs.' },
-  { key: 'ADMIN_JWT_SECRET', required: true, hint: 'A long random string — used to sign admin JWTs.' },
-  { key: 'ORGANIZER_JWT_SECRET', required: true, hint: 'A long random string — used to sign organizer JWTs.' },
-  { key: 'QR_SIGNING_SECRET', required: true, hint: 'A long random string — used to sign ticket QR payloads.' },
   {
     key: 'JWT_SECRET',
+    required: true,
     validate: (v) => v.length >= 32,
-    hint: 'JWT_SECRET must be at least 32 characters in production.',
+    hint: 'A long random string (≥32 chars) — used to sign user JWTs.',
   },
   {
     key: 'ADMIN_JWT_SECRET',
+    required: true,
     validate: (v) => v.length >= 32,
-    hint: 'ADMIN_JWT_SECRET must be at least 32 characters in production.',
+    hint: 'A long random string (≥32 chars) — used to sign admin JWTs.',
   },
   {
     key: 'ORGANIZER_JWT_SECRET',
+    required: true,
     validate: (v) => v.length >= 32,
-    hint: 'ORGANIZER_JWT_SECRET must be at least 32 characters in production.',
+    hint: 'A long random string (≥32 chars) — used to sign organizer JWTs.',
   },
   {
     key: 'QR_SIGNING_SECRET',
+    required: true,
     validate: (v) => v.length >= 32,
-    hint: 'QR_SIGNING_SECRET must be at least 32 characters in production.',
+    hint: 'A long random string (≥32 chars) — used to sign ticket QR payloads.',
+  },
+  {
+    key: 'CASHFREE_WEBHOOK_SECRET',
+    required: true,
+    hint: 'Cashfree webhook HMAC secret — required to verify incoming webhooks.',
   },
   {
     key: 'CORS_ORIGIN',
-    validate: (v) => v !== '*',
-    hint: 'CORS_ORIGIN=* is rejected in production. Set explicit origin(s).',
+    required: true,
+    validate: (v) => v !== '*' && v.length > 0,
+    hint: 'Set explicit origin(s) — CORS_ORIGIN=* is rejected in production.',
   },
 ];
 
@@ -158,7 +164,7 @@ export function validateEnv(): EnvValidationResult {
   // will get stuck in pending_payment.
   if (isProd && !process.env.CASHFREE_NOTIFY_URL) {
     warnings.push(
-      'CASHFREE_NOTIFY_URL is not set. Set it to the full deployed webhook URL (e.g. https://your-app.onrender.com/api/v1/turf/webhooks/cashfree).',
+      'CASHFREE_NOTIFY_URL is not set. Set it to the full deployed webhook URL (e.g. https://your-app.onrender.com/api/v1/webhooks/cashfree).',
     );
   }
 

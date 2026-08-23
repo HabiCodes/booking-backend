@@ -36,17 +36,38 @@ import { turfAdminRoutes } from './routes/turfAdminRoutes';
 import { turfPaymentRoutes } from './routes/turfPaymentRoutes';
 import { unifiedWebhookRoutes } from './routes/unifiedWebhookRoutes';
 import { turfManagerRoutes } from './routes/turfManagerRoutes';
-import { startAvailabilityScheduler } from './services/turfAvailabilityScheduler';
+import { runTurfWorkers } from './workers/turfWorkers';
+import { runMovieWorkers } from './workers/movieWorkers';
 import { movieRoutes } from './routes/movies';
 import { movieScanRoutes } from './routes/movieScanRoutes';
 import { adminMovieRouter } from './routes/movieAdmin';
 import { layoutVersionRoutes } from './routes/layoutVersionRoutes';
 import { organizerMovieRouter } from './routes/movieManagerRoutes';
+import { startAvailabilityScheduler } from './services/turfAvailabilityScheduler';
 import ownerDashboardRoutes from './routes/ownerDashboardRoutes';
 import ownerManagerRoutes from './routes/ownerManagerRoutes';
 import { organizerInvitationRoutes } from './routes/organizerInvitationRoutes';
 import { assertValidEnvOrExit } from './utils/envValidation';
 import { authRepository } from './repositories/authRepository';
+
+// Security headers — hardened for production
+function securityHeaders(_req: any, res: any, next: any): void {
+  if (config.nodeEnv === 'production') {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    // Content-Security-Policy: api server — no inline scripts, no eval
+    res.setHeader('Content-Security-Policy',
+      "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    );
+    // Remove server identification
+    res.removeHeader('X-Powered-By');
+  }
+  next();
+}
 
 // Run env validation before any other initialization
 assertValidEnvOrExit();
@@ -61,6 +82,7 @@ const server = createServer(app);
 
 // Security
 app.use(helmet({ contentSecurityPolicy: false }));
+app.use(securityHeaders);
 
 // CORS
 app.use(cors({
@@ -255,6 +277,30 @@ async function start() {
     // Start availability scheduler (rolling 15-day window)
     if (config.nodeEnv !== 'test') {
       startAvailabilityScheduler();
+    }
+
+    // Background workers: expire stale bookings and holds
+    // Run once at boot to clean up any stale state from previous session
+    if (config.nodeEnv !== 'test') {
+      try {
+        await runTurfWorkers('all');
+        await runMovieWorkers('all');
+        logger.info('Background workers completed initial sweep');
+      } catch (err) {
+        logger.warn('Initial worker sweep failed (non-fatal):', err as Error);
+      }
+
+      // Schedule periodic worker runs
+      const WORKER_INTERVAL_MS = 5 * 60 * 1000; // every 5 minutes
+      setInterval(() => {
+        runTurfWorkers('expire').catch((err: Error) =>
+          logger.error('Turf worker error:', err)
+        );
+        runMovieWorkers('expire').catch((err: Error) =>
+          logger.error('Movie worker error:', err)
+        );
+      }, WORKER_INTERVAL_MS);
+      logger.info('Background workers scheduled every 5 minutes');
     }
 
     // Ensure upload directories exist

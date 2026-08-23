@@ -1,4 +1,4 @@
-import { Router, Request } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import {
   listMovies, getMovie, getFeaturedMovies, getGenres, getLanguages,
   listCinemas, getCinema, getCinemasByCity, getScreens,
@@ -12,6 +12,7 @@ import {
 } from '../controllers/movieBookingController';
 import { movieBookingService } from '../services/movieBookingService';
 import { authMiddleware } from '../middleware/auth';
+import { bookingRateLimiter } from '../middleware/rateLimiter';
 import type { AuthRequest } from '../middleware/auth';
 
 const router = Router();
@@ -56,16 +57,34 @@ router.get('/showtimes/:showtimeId/seats', async (req: Request, res, next) => {
 
 router.post('/showtimes/:showtimeId/calculate-prices', calculatePrices);
 
+// ── Movie search (iOS discovery) ────────────────────────────────────────────────
+
+router.get('/movies/search', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const q = (req.query.q as string | undefined)?.trim();
+    if (!q || q.length < 2) {
+      res.json({ success: true, data: { items: [], total: 0, page: 1, pageSize: 20, totalPages: 0 } });
+      return;
+    }
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 20;
+    const result = await movieBookingService.searchMovies(q, page, pageSize);
+    res.json({ success: true, data: { items: result.items, total: result.total, page: result.page, pageSize: result.pageSize, totalPages: result.totalPages } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── Authenticated booking routes ──────────────────────────────────────────────
 
 router.use(authMiddleware);
 
 // ── Booking (auth required) ───────────────────────────────────────────────────
 
-router.post('/bookings', createBooking);
-router.post('/bookings/confirm', confirmBooking);
+router.post('/bookings', bookingRateLimiter, createBooking);
+router.post('/bookings/confirm', bookingRateLimiter, confirmBooking);
 
-router.post('/hold-seats', holdSeats);
+router.post('/hold-seats', bookingRateLimiter, holdSeats);
 router.post('/hold-seats/:holdKey/release', releaseSeats);
 router.get('/hold-seats/:holdKey/status', checkHold);
 

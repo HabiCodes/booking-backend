@@ -144,7 +144,7 @@ export class TurfBookingService {
 
       // ── Coupon Validation ─────────────────────────────────────────────────
       let discountAmount = 0;
-      let couponUsageId: number | null = null;
+      let couponId: number | null = null;
       if (input.coupon_code) {
         const coupon = await turfCouponRepository.findByCode(venue.organization_id, input.coupon_code);
         if (!coupon) {
@@ -182,14 +182,7 @@ export class TurfBookingService {
           discountAmount = parseFloat(coupon.discount_value as string);
         }
 
-        const usage = await turfCouponRepository.createUsage({
-          coupon_id: coupon.id,
-          booking_id: 0,
-          user_id: userId,
-          discount_amount: discountAmount,
-        });
-        couponUsageId = usage.id;
-        await turfCouponRepository.incrementUsage(coupon.id);
+        couponId = coupon.id;
       }
 
       const finalAmount = Math.round(((parseFloat(unit.price ?? resource.base_price) * quantity) - discountAmount) * 100) / 100;
@@ -208,12 +201,13 @@ export class TurfBookingService {
       );
       const booking = bookingResult.rows[0];
 
-      // Update coupon usage with actual booking_id
-      if (couponUsageId) {
-        await getPool().query(
-          'UPDATE turf_coupon_usages SET booking_id = $1 WHERE id = $2',
-          [booking.id, couponUsageId]
+      // Create coupon usage with actual booking_id (atomic with booking creation)
+      if (couponId) {
+        await client.query(
+          'INSERT INTO turf_coupon_usages (coupon_id, booking_id, user_id, discount_amount) VALUES ($1, $2, $3, $4)',
+          [couponId, booking.id, userId, discountAmount]
         );
+        await client.query('UPDATE turf_coupons SET used_count = used_count + 1 WHERE id = $1', [couponId]);
       }
 
       await turfAvailabilityRepository.markPaymentPending(unit.id, userId);

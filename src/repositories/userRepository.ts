@@ -108,6 +108,25 @@ export class UserRepository {
     );
     return rows as unknown as UserPublic[];
   }
+
+  async updateProfile(userId: number, input: { username?: string | null }): Promise<UserPublic | null> {
+    const fields: string[] = [];
+    const params: unknown[] = [];
+    let idx = 1;
+    if (input.username !== undefined) {
+      const safeUsername = input.username && input.username.trim() ? input.username.trim() : null;
+      fields.push(`username = $${idx++}`);
+      params.push(safeUsername);
+    }
+    if (fields.length === 0) return this.findById(userId);
+    fields.push(`updated_at = NOW()`);
+    params.push(userId);
+    const { rows } = await getPool().query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, email, username, is_verified, is_active, created_at`,
+      params
+    );
+    return (rows as unknown as UserPublic[])[0] || null;
+  }
 }
 
 export const userRepository = new UserRepository();

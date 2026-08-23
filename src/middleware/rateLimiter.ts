@@ -102,3 +102,32 @@ export const apiRateLimiter = rateLimiter({
   windowMs: 60_000,
   max: 100,
 });
+
+/**
+ * Stricter rate limiter for booking creation and confirmation endpoints.
+ * Prevents brute-force guessing of order IDs and booking reference abuse.
+ */
+export const bookingRateLimiter = rateLimiter({
+  windowMs: 60_000,
+  max: 15,
+  message: 'Too many booking requests, please try again later.',
+});
+
+/**
+ * Rate limiter for payment-related write endpoints (webhook verification,
+ * payment confirmation, refund requests).
+ */
+export const paymentRateLimiter = rateLimiter({
+  windowMs: 60_000,
+  max: 30,
+  message: 'Too many payment requests, please try again later.',
+});
+
+/**
+ * Rate limiter for coupon validation.
+ */
+export const couponRateLimiter = rateLimiter({
+  windowMs: 60_000,
+  max: 10,
+  message: 'Too many coupon requests, please try again later.',
+});
