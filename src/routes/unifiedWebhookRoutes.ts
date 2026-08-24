@@ -65,7 +65,7 @@ function verifyWebhookSignature(rawBody: Buffer, signatureHeader: string | undef
   return crypto.timingSafeEqual(sigBuf, expBuf);
 }
 
-function buildIdempotencyKey(bookingType: string, orderId: string, eventType: string): string {
+export function buildIdempotencyKey(bookingType: string, orderId: string, eventType: string): string {
   return `${bookingType}_webhook_${orderId}_${eventType}`;
 }
 
@@ -339,4 +339,4 @@ router.post('/cashfree', async (req: any, res: any, next: any): Promise<void> =>
   }
 });
 
-export { router as unifiedWebhookRoutes };
+export { router as unifiedWebhookRoutes, verifyWebhookSignature };

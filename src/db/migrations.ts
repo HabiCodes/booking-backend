@@ -3,10 +3,20 @@
  *
  * - Tracks applied migrations in `schema_migrations` table.
  * - Wraps each migration in a transaction (BEGIN/COMMIT/ROLLBACK).
+ * - Uses PostgreSQL advisory lock to prevent concurrent migration execution
+ *   across multiple API instances.
  * - Detects SQL error patterns in `existing column "remaining_capacity"` and
- *   similar ALTER TABLE conflicts; these are treated as no-ops when the
- *   checker query inside the migration file couldn't prevent them.
- * - Files loaded from `migrations/versions/###_name.sql` in numeric order.
+ *   similar ALTER TABLE conflicts; these are treated as no-ops.
+ * - Files loaded from `migrations/versions/*.sql` in numeric order.
+ *
+ * Advisory lock strategy:
+ *   pg_try_advisory_xact_lock() is non-blocking — it returns immediately
+ *   with true/false. We retry with a short sleep until we acquire the lock
+ *   or time out. This ensures:
+ *   - Instance A starts migrations → acquires the lock
+ *   - Instance B starts simultaneously → gets false → retries
+ *   - Instance A finishes → releases the lock
+ *   - Instance B acquires → runs migrations → all applied → no-op
  */
 
 import { readdirSync, readFileSync } from 'fs';
@@ -20,10 +30,19 @@ const SCHEMA_MIGRATIONS_TABLE = `
     version    VARCHAR(20) PRIMARY KEY,
     name       VARCHAR(255) NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
+  )
 `;
 
-/** Patterns in Postgres error messages that indicate the migration is a no-op. */
+function advisoryLockId(text: string): bigint {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    const chr = text.charCodeAt(i);
+    hash = ((hash << 5) - hash) + chr;
+    hash |= 0;
+  }
+  return BigInt(hash & 0x7fffffff);
+}
+
 const HARMONIC_ERROR_PATTERNS = [
   /existing column/i,
   /duplicate column/i,
@@ -73,11 +92,47 @@ export async function runMigrations(): Promise<string[]> {
   const pool = getPool();
   const applied: string[] = [];
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  const MAX_LOCK_WAIT_MS = 30_000;
+  const LOCK_RETRY_MS = 250;
+  const lockId = advisoryLockId('entrymyslot_migrations');
+  let client: PoolClient | null = null;
 
-    // Bootstrap the tracking table
+  try {
+    client = await pool.connect();
+
+    // ── Retry loop for advisory lock acquisition ─────────────────────────────
+    const lockStart = Date.now();
+    let lockAcquired = false;
+
+    while (Date.now() - lockStart < MAX_LOCK_WAIT_MS) {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT pg_try_advisory_xact_lock(${lockId.toString()}) AS acquired`
+      );
+      lockAcquired = rows[0]?.acquired === true;
+
+      if (lockAcquired) break;
+
+      // Lock not acquired — rollback, release client, wait, get new client
+      await client.query('ROLLBACK');
+      client.release();
+      client = null;
+      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
+      client = await pool.connect();
+    }
+
+    if (!lockAcquired) {
+      logger.error('[Migrations] Could not acquire advisory lock within 30s — another instance is migrating. This instance cannot safely serve traffic.');
+      if (client) {
+        await client.query('ROLLBACK');
+        client.release();
+        client = null;
+      }
+      throw new Error('Migration advisory lock timeout — another instance is running migrations. Startup cannot proceed safely.');
+    }
+
+    logger.info('[Migrations] Advisory lock acquired — proceeding with migration check');
+
     await client.query(SCHEMA_MIGRATIONS_TABLE);
 
     const { rows: appliedRows } = await client.query(
@@ -103,7 +158,7 @@ export async function runMigrations(): Promise<string[]> {
           m.name,
         ]);
         applied.push(m.version);
-        logger.info(`Migration ${m.version} applied ✓`);
+        logger.info(`Migration ${m.version} applied`);
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         const isHarmonic = HARMONIC_ERROR_PATTERNS.some((p) => p.test(errorMessage));
@@ -119,7 +174,6 @@ export async function runMigrations(): Promise<string[]> {
             ]);
             applied.push(m.version);
           } catch {
-            // If we can't record it, roll back and fail
             throw err;
           }
         } else {
@@ -136,11 +190,15 @@ export async function runMigrations(): Promise<string[]> {
 
     await client.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+    }
     logger.error('Migration runner failed:', err as Error);
     throw err;
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 
   return applied;

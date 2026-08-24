@@ -95,3 +95,57 @@ export function stopAvailabilityScheduler(): void {
     logger.info('[AvailSched] Scheduler stopped');
   }
 }
+
+// ── Distributed-lock-aware scheduler start ───────────────────────────────────
+// When multiple API instances run, only one should execute bootstrap/extension.
+
+import { tryAcquireSchedulerLock, releaseSchedulerLock } from '../infrastructure/schedulerLock';
+
+const SCHEDULER_LOCK_ID = 'availability-scheduler';
+const SCHEDULER_LOCK_TTL_SECONDS = 3700; // Slightly longer than 1-hour interval
+
+export function startAvailabilitySchedulerWithLock(): void {
+  logger.info('[AvailSched] Starting availability scheduler (distributed lock)...');
+
+  async function tryBootstrap(): Promise<void> {
+    const locked = await tryAcquireSchedulerLock(SCHEDULER_LOCK_ID, SCHEDULER_LOCK_TTL_SECONDS);
+    if (!locked) {
+      logger.info('[AvailSched] Another instance holds the scheduler lock — skipping bootstrap');
+      return;
+    }
+
+    try {
+      await bootstrapAvailability();
+    } catch (err) {
+      logger.error('[AvailSched] Bootstrap threw:', err);
+    } finally {
+      // Keep the lock held so interval runs are also coordinated
+    }
+  }
+
+  async function tryExtension(): Promise<void> {
+    const locked = await tryAcquireSchedulerLock(SCHEDULER_LOCK_ID, SCHEDULER_LOCK_TTL_SECONDS);
+    if (!locked) {
+      logger.debug('[AvailSched] Another instance holds the scheduler lock — skipping extension');
+      return;
+    }
+
+    try {
+      await runExtension();
+    } catch (err) {
+      logger.error('[AvailSched] Extension threw:', err);
+    }
+  }
+
+  // Bootstrap after a short delay
+  setTimeout(() => {
+    tryBootstrap();
+  }, INITIAL_BOOTSTRAP_DELAY_MS);
+
+  // Extend the rolling window every hour
+  schedulerInterval = setInterval(() => {
+    tryExtension();
+  }, EXTENSION_INTERVAL_MS);
+
+  logger.info(`[AvailSched] Scheduler running (interval: ${EXTENSION_INTERVAL_MS / 1000}s, distributed lock)`);
+}

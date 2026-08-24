@@ -38,12 +38,16 @@ import { unifiedWebhookRoutes } from './routes/unifiedWebhookRoutes';
 import { turfManagerRoutes } from './routes/turfManagerRoutes';
 import { runTurfWorkers } from './workers/turfWorkers';
 import { runMovieWorkers } from './workers/movieWorkers';
+import { tryAcquireWorkerLock, releaseWorkerLock } from './infrastructure/workerLock';
+import { tryAcquireSchedulerLock, releaseSchedulerLock } from './infrastructure/schedulerLock';
+import { authRateLimiter, apiRateLimiter, createDistributedRateLimiter } from './infrastructure/distributedRateLimiter';
+import { createRedisIoAdapter } from './infrastructure/redisSocketAdapter';
+import { startAvailabilitySchedulerWithLock } from './services/turfAvailabilityScheduler';
 import { movieRoutes } from './routes/movies';
 import { movieScanRoutes } from './routes/movieScanRoutes';
 import { adminMovieRouter } from './routes/movieAdmin';
 import { layoutVersionRoutes } from './routes/layoutVersionRoutes';
 import { organizerMovieRouter } from './routes/movieManagerRoutes';
-import { startAvailabilityScheduler } from './services/turfAvailabilityScheduler';
 import ownerDashboardRoutes from './routes/ownerDashboardRoutes';
 import ownerManagerRoutes from './routes/ownerManagerRoutes';
 import { organizerInvitationRoutes } from './routes/organizerInvitationRoutes';
@@ -113,6 +117,7 @@ app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 
+// Global API rate limiter (process-scoped, but all instances share Redis-backed sub-limiters)
 const globalLimiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
   max: config.rateLimit.max,
@@ -120,14 +125,6 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
 });
 app.use('/api/', globalLimiter);
-
-// Tighter limiter for auth endpoints
-const authLimiter = rateLimit({
-  windowMs: config.rateLimit.windowMs,
-  max: config.rateLimit.authMax,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -147,7 +144,7 @@ app.get('/health/shutdown', healthShutdown);
 
 const apiV1 = express.Router();
 
-apiV1.use('/auth', authLimiter, authRoutes);
+apiV1.use('/auth', authRateLimiter, authRoutes);
 apiV1.use('/events', eventRoutes);
 apiV1.use('/bookings', bookingRoutes);
 apiV1.use('/turf/admin', turfAdminRoutes);
@@ -180,7 +177,7 @@ app.use('/api/v1', apiV1);
 
 // ── Legacy /api routes (backward compatibility) ───────────────────────────────
 
-app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/auth', authRateLimiter, authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/turf/admin', turfAdminRoutes);
@@ -216,21 +213,12 @@ app.use(notFoundHandler);
 
 app.use(errorHandler);
 
-// ── Start server FIRST (Hostinger requires listen() immediately) ──────────────
-
-server.listen(config.port, () => {
-  logger.info(`Server running on port ${config.port} (${config.nodeEnv})`);
-  logger.info(`API v1:  /api/v1`);
-  logger.info(`Legacy:  /api  (deprecated)`);
-});
-
-// ── Initialize ────────────────────────────────────────────────────────────────
+// ── Initialize (migrations + setup before accepting traffic) ─────────────────
 
 async function start() {
   try {
-    // Verify DB connection and apply migrations.
-    // Connection failure is non-fatal (server can serve cached/public routes),
-    // but migration failure IS fatal — the schema is inconsistent.
+    // Verify DB connection and apply migrations BEFORE listening.
+    // This ensures no instance serves traffic with a stale schema.
     let poolAvailable = false;
     try {
       const pool = getPool();
@@ -255,8 +243,7 @@ async function start() {
     }
 
     // Background sweep: drop any pending registrations whose OTPs are
-    // already past their TTL or that were never collected.  We log the
-    // count when meaningful so ops can spot a spike in forgotten sign-ups.
+    // already past their TTL or that were never collected.
     if (poolAvailable) {
       try {
         const dropped = await authRepository.cleanupExpiredPendingRegistrations();
@@ -271,40 +258,87 @@ async function start() {
       }
     }
 
-    // Init Socket.IO
+    // Init Socket.IO with Redis adapter for cross-instance communication
     initSocketServer(server);
 
-    // Start availability scheduler (rolling 15-day window)
+    // Start availability scheduler with distributed lock (rolling 15-day window)
     if (config.nodeEnv !== 'test') {
-      startAvailabilityScheduler();
+      startAvailabilitySchedulerWithLock();
     }
 
     // Background workers: expire stale bookings and holds
     // Run once at boot to clean up any stale state from previous session
     if (config.nodeEnv !== 'test') {
       try {
-        await runTurfWorkers('all');
-        await runMovieWorkers('all');
-        logger.info('Background workers completed initial sweep');
+        const turfBootLock = await tryAcquireWorkerLock('turf-workers-boot', 600_000);
+        if (turfBootLock) {
+          try {
+            await runTurfWorkers('all');
+            logger.info('Background workers completed initial turf sweep');
+          } catch (err) {
+            logger.warn('Initial turf worker sweep failed (non-fatal):', err as Error);
+          } finally {
+            await releaseWorkerLock('turf-workers-boot');
+          }
+        }
+
+        const movieBootLock = await tryAcquireWorkerLock('movie-workers-boot', 600_000);
+        if (movieBootLock) {
+          try {
+            await runMovieWorkers('all');
+            logger.info('Background workers completed initial movie sweep');
+          } catch (err) {
+            logger.warn('Initial movie worker sweep failed (non-fatal):', err as Error);
+          } finally {
+            await releaseWorkerLock('movie-workers-boot');
+          }
+        }
       } catch (err) {
-        logger.warn('Initial worker sweep failed (non-fatal):', err as Error);
+        logger.warn('Initial worker sweep setup failed (non-fatal):', err as Error);
       }
 
-      // Schedule periodic worker runs
+      // Schedule periodic worker runs with distributed lock
+      // Only one API instance executes workers per interval.
       const WORKER_INTERVAL_MS = 5 * 60 * 1000; // every 5 minutes
-      setInterval(() => {
-        runTurfWorkers('expire').catch((err: Error) =>
-          logger.error('Turf worker error:', err)
-        );
-        runMovieWorkers('expire').catch((err: Error) =>
-          logger.error('Movie worker error:', err)
-        );
-      }, WORKER_INTERVAL_MS);
-      logger.info('Background workers scheduled every 5 minutes');
+      const WORKER_LOCK_TTL_MS = 4 * 60_000; // 4 min — slightly less than interval
+
+      async function runScheduledWorkers(): Promise<void> {
+        const turfLocked = await tryAcquireWorkerLock('turf-workers', WORKER_LOCK_TTL_MS);
+        if (turfLocked) {
+          try {
+            await runTurfWorkers('expire');
+          } catch (err) {
+            logger.error('Turf worker error:', err as Error);
+          } finally {
+            await releaseWorkerLock('turf-workers');
+          }
+        }
+
+        const movieLocked = await tryAcquireWorkerLock('movie-workers', WORKER_LOCK_TTL_MS);
+        if (movieLocked) {
+          try {
+            await runMovieWorkers('expire');
+          } catch (err) {
+            logger.error('Movie worker error:', err as Error);
+          } finally {
+            await releaseWorkerLock('movie-workers');
+          }
+        }
+      }
+
+      setInterval(runScheduledWorkers, WORKER_INTERVAL_MS);
+      logger.info('Background workers scheduled every 5 minutes (distributed lock)');
     }
 
     // Ensure upload directories exist
     ensureUploadDirs();
+
+    // ── Start listening ONLY after all initialization is complete ──────────────
+    server.listen(config.port, () => {
+      logger.info(`Server running on port ${config.port} (${config.nodeEnv})`);
+      logger.info(`API v1:  /api/v1`);
+      logger.info(`Legacy:  /api  (deprecated)`);
+    });
   } catch (err) {
     logger.error('Failed to start server:', err as Error);
     process.exit(1);
@@ -328,7 +362,7 @@ async function initialBroadcast() {
     const id = Number(row.id);
     const capacity = Number(row.capacity);
     const bookedCount = Number(row.bookedCount) || 0;
-    broadcastBookingCount(id, bookedCount, capacity);
+    await broadcastBookingCount(id, bookedCount, capacity);
   } catch {
     // silent — startup shouldn't fail if DB is empty
   }
@@ -340,19 +374,63 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    closePool();
-    process.exit(0);
-  });
-});
+let isShuttingDown = false;
+let shutdownComplete = false;
 
-process.on('SIGINT', async () => {
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) {
+    logger.warn(`${signal} received again — already shutting down`);
+    return;
+  }
+  isShuttingDown = true;
+  shutdownComplete = false;
+  logger.info(`${signal} received — starting graceful shutdown`);
+
+  // 1. Stop accepting new connections
   server.close(() => {
-    closePool();
-    process.exit(0);
+    logger.info('HTTP server closed — no new connections accepted');
   });
-});
+
+  // Force-close only if cleanup hasn't completed within the drain period
+  const DRAIN_MS = 30_000;
+  const forceTimer = setTimeout(async () => {
+    if (!shutdownComplete) {
+      logger.warn('Drain period expired — forcing exit (cleanup incomplete)');
+      process.exit(1);
+    }
+  }, DRAIN_MS);
+
+  try {
+    // 2. Close Socket.IO
+    const { closeSocketServer } = await import('./sockets');
+    closeSocketServer();
+    logger.info('Socket.IO closed');
+
+    // 3. Stop availability scheduler
+    const { stopAvailabilityScheduler } = await import('./services/turfAvailabilityScheduler');
+    stopAvailabilityScheduler();
+    logger.info('Availability scheduler stopped');
+  } catch {
+    // Non-fatal
+  }
+
+  // 4. Close Redis
+  const { closeRedis } = await import('./db/redis');
+  closeRedis();
+  logger.info('Redis connection closed');
+
+  // 5. Close database pool
+  await closePool();
+  logger.info('Database pool closed');
+
+  // Cleanup complete — cancel the force timer and exit 0
+  shutdownComplete = true;
+  clearTimeout(forceTimer);
+  logger.info('Graceful shutdown complete');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 export { app, server, getIo };

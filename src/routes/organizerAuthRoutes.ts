@@ -4,7 +4,7 @@ import {
   refresh as organizerRefresh,
   setupPassword as organizerSetupPassword,
 } from '../controllers/organizerAuthController';
-import { authRateLimiter } from '../middleware/rateLimiter';
+import { authRateLimiter } from '../infrastructure/distributedRateLimiter';
 
 const router = Router();
 

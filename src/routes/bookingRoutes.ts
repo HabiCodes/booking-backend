@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { AuthRequest } from '../middleware/auth';
-import { bookingRateLimiter } from '../middleware/rateLimiter';
+import { bookingRateLimiter } from '../infrastructure/distributedRateLimiter';
 import { createBooking, cancelBooking, getMyBookings, getBookingPdf, getBookingDetails } from '../controllers/bookingController';
 
 const router = Router();

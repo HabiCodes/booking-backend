@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { adminLogin } from '../controllers/adminController';
-import { rateLimiter } from '../middleware/rateLimiter';
+import { createDistributedRateLimiter } from '../infrastructure/distributedRateLimiter';
 
-const adminLoginLimiter = rateLimiter({
+const adminLoginLimiter = createDistributedRateLimiter({
   windowMs: 15 * 60_000, // 15 minutes
   max: 10,
   message: 'Too many admin login attempts. Please try again later.',

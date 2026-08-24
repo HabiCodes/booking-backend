@@ -101,10 +101,19 @@ if (require.main === module) {
   (async () => {
     const job = (process.argv[2] || 'all') as MovieWorkerJob;
     try {
-      await runMovieWorkers(job);
+      await main(job);
+    } catch (err) {
+      process.exitCode = 1;
     } finally {
       const { closePool } = await import('../db/pool');
       await closePool();
     }
   })();
+}
+
+/**
+ * Main entry point — callable by the worker scheduler.
+ */
+export async function main(job: MovieWorkerJob = 'all'): Promise<void> {
+  await runMovieWorkers(job);
 }

@@ -16,7 +16,9 @@ const REFRESH_EXPIRY_DAYS = 30;                     // 30 days
 export interface AccessTokenPayload {
   id: number;
   email: string;
+  sub?: string;
   session_id?: number;
+  typ?: string;
 }
 
 function buildPayload(userId: number, email: string): { id: number; sub: string } {
@@ -104,18 +106,18 @@ export function verifyAccessToken(token: string): AccessTokenPayload | null {
     if (!verifyTokenType(decoded, 'access')) return null;
     if (typeof decoded.id !== 'number' || typeof decoded.sub !== 'string') return null;
     const sessionId = typeof decoded.session_id === 'number' ? decoded.session_id : undefined;
-    return { id: decoded.id, email: decoded.sub, session_id: sessionId };
+    return { id: decoded.id, email: decoded.sub, sub: decoded.sub, typ: decoded.typ, session_id: sessionId };
   } catch {
     return null;
   }
 }
 
-export function verifyRefreshToken(token: string): { id: number; email: string } | null {
+export function verifyRefreshToken(token: string): { id: number; email: string; typ?: string } | null {
   try {
     const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;
     if (!verifyTokenType(decoded, 'refresh')) return null;
     if (typeof decoded.id !== 'number' || typeof decoded.sub !== 'string') return null;
-    return { id: decoded.id, email: decoded.sub };
+    return { id: decoded.id, email: decoded.sub, typ: decoded.typ };
   } catch {
     return null;
   }

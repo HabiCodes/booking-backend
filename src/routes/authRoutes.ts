@@ -20,7 +20,7 @@ import {
   updateProfile,
 } from '../controllers/authController';
 import { authMiddleware } from '../middleware/auth';
-import { authRateLimiter, resendVerificationLimiter, otpVerifyLimiter } from '../middleware/rateLimiter';
+import { authRateLimiter, resendVerificationLimiter, otpVerifyLimiter } from '../infrastructure/distributedRateLimiter';
 
 const router = Router();
 

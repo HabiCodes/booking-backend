@@ -64,23 +64,41 @@ export class TurfBookingService {
     quantity?: number;
     booking_type?: 'online' | 'offline' | 'complimentary';
     coupon_code?: string | null;
+    amount?: number;
+    duration_hours?: number;
   }, actor: { actorId: number; actorType: string }) {
     const unitId = input.availability_unit_id;
+
+    // ── Input Validation ─────────────────────────────────────────────────────
+    if (typeof input.amount === 'number' && input.amount <= 0) {
+      throw new AppError('Booking amount must be positive', 400);
+    }
+    if (typeof input.duration_hours === 'number' && (input.duration_hours <= 0 || input.duration_hours > 4)) {
+      throw new AppError('Booking duration must be between 1 and 4 hours', 400);
+    }
+
     const quantity = Math.min(Math.max(input.quantity ?? 1, 1), MAX_QUANTITY);
 
-    // ── Idempotency Check ────────────────────────────────────────────────────
+    // ── Idempotency Check (Redis fast-path, DB fallback) ──────────────────────
+    // If Redis is down, the try/catch falls through to the DB transaction
+    // which has SELECT FOR UPDATE for authoritative concurrency protection.
     const idempotencyKey = generateIdempotencyKey(userId, unitId);
-    const redis = getRedis();
-    const cached = await redis.get(`turf:idempotency:${idempotencyKey}`);
-    if (cached) {
-      const data = JSON.parse(cached);
-      const existing = await turfBookingRepository.findById(data.bookingId);
-      if (existing && existing.status === 'pending_payment') {
-        throw new AppError('Booking already in progress', 409);
+    let redis = getRedis();
+    try {
+      const cached = await redis.get(`turf:idempotency:${idempotencyKey}`);
+      if (cached) {
+        const data = JSON.parse(cached);
+        const existing = await turfBookingRepository.findById(data.bookingId);
+        if (existing && existing.status === 'pending_payment') {
+          throw new AppError('Booking already in progress', 409);
+        }
+        if (existing) {
+          return { booking: existing, couponDiscount: 0, correlationId: '', idempotent: true };
+        }
       }
-      if (existing) {
-        return { booking: existing, couponDiscount: 0, correlationId: '', idempotent: true };
-      }
+    } catch (redisErr) {
+      logger.warn('[Idempotency] Redis unavailable, falling through to DB transaction:', redisErr instanceof Error ? redisErr.message : String(redisErr));
+      // Continue to DB transaction — SELECT FOR UPDATE provides concurrency safety
     }
 
     const pool = getPool();

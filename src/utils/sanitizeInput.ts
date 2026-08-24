@@ -3,20 +3,21 @@
  */
 
 /**
- * Strip HTML tags and encode special characters to prevent XSS.
- * Converts: <script> → &lt;script&gt;, " → &quot;, etc.
+ * Strip dangerous tags (script, style and their content) then encode
+ * remaining HTML entities to prevent XSS.
+ * Converts: <script>alert("xss")</script> → "", <b>Bold</b> → &lt;b&gt;Bold&lt;/b&gt;
  */
 export function sanitizeHtml(input: string | null | undefined): string | null {
   if (input == null) return null;
-  // Strip all HTML tags
-  let cleaned = input.replace(/<[^>]*>/g, '');
-  // Encode special HTML characters
+  // Strip dangerous tags and their content entirely
+  let cleaned = input.replace(/<script[\s\S]*?<\/script>/gi, '');
+  cleaned = cleaned.replace(/<style[\s\S]*?<\/style>/gi, '');
+  // Encode remaining HTML special characters (do NOT encode / in closing tags)
   cleaned = cleaned.replace(/&/g, '&amp;');
   cleaned = cleaned.replace(/</g, '&lt;');
   cleaned = cleaned.replace(/>/g, '&gt;');
   cleaned = cleaned.replace(/"/g, '&quot;');
   cleaned = cleaned.replace(/'/g, '&#x27;');
-  cleaned = cleaned.replace(/\//g, '&#x2F;');
   // Trim whitespace
   cleaned = cleaned.trim();
   return cleaned;

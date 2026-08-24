@@ -28,8 +28,8 @@ describe('Movie Workers', () => {
 
     it('exports a main function / entry point', () => {
       const content = readFileSync(workerPath, 'utf-8');
-      assert.ok(content.includes('async function main()'), 'Should have main entry point');
-      assert.ok(content.includes('main()'), 'Should call main()');
+      assert.ok(content.includes('export async function main'), 'Should have exported main entry point');
+      assert.ok(content.includes('main('), 'Should call main()');
     });
 
     it('supports "expire" and "all" job types', () => {

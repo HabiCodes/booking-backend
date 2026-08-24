@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getPool, closePool } from '../db/pool';
+import { isRedisAvailable } from '../db/redis';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 
@@ -42,6 +43,21 @@ export async function readiness(_req: Request, res: Response): Promise<void> {
     logger.warn('Readiness check: database unreachable', { error: (err as Error).message });
     checks.db = { status: 'error', error: (err as Error).message };
     overallStatus = 'degraded';
+  }
+
+  // ── Redis ──────────────────────────────────────────────────────────────────
+  // Redis is critical for session management, rate limiting, and seat holds.
+  try {
+    const redisAvailable = await isRedisAvailable();
+    checks.redis = {
+      status: redisAvailable ? 'ok' : 'error',
+    };
+    if (!redisAvailable && overallStatus === 'ok') {
+      overallStatus = 'degraded';
+    }
+  } catch (err) {
+    checks.redis = { status: 'error', error: (err as Error).message };
+    if (overallStatus === 'ok') overallStatus = 'degraded';
   }
 
   // ── Result ─────────────────────────────────────────────────────────────────

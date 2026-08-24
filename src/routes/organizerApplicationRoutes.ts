@@ -8,12 +8,12 @@ import {
   submitOrganizerApplication,
   getApplicationStatus,
 } from '../controllers/organizerApplicationController';
-import { rateLimiter } from '../middleware/rateLimiter';
+import { createDistributedRateLimiter } from '../infrastructure/distributedRateLimiter';
 
 const router = Router();
 
 // Tighter rate limit on application submission: 5 per hour per IP (costly to spam)
-const applicationSubmitLimiter = rateLimiter({
+const applicationSubmitLimiter = createDistributedRateLimiter({
   windowMs: 60 * 60_000,
   max: 5,
   message: 'Too many organizer application submissions. Please try again later.',

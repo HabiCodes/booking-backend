@@ -15,6 +15,7 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 
 // ── Import functions under test ──────────────────────────────────────────────
 
@@ -263,9 +264,9 @@ describe('RBAC — permission enforcement', () => {
     assert.strictEqual(perms['admins:write'], true);
   });
 
-  it('custom permissions array restricts admin', async () => {
+  it('custom permissions record restricts admin', async () => {
     const { computePermissions } = await import('../../src/rbac/permissions');
-    const perms = computePermissions('admin', ['bookings:read']);
+    const perms = computePermissions('admin', { 'bookings:read': true, 'bookings:cancel': false });
     assert.strictEqual(perms['bookings:read'], true);
     assert.strictEqual(perms['bookings:cancel'], false);
   });

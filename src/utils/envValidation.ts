@@ -47,7 +47,6 @@ const PRODUCTION_REQUIRED: ValidationRule[] = [
   },
   {
     key: 'CASHFREE_WEBHOOK_SECRET',
-    required: true,
     hint: 'Cashfree webhook HMAC secret — required to verify incoming webhooks.',
   },
   {

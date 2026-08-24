@@ -10,7 +10,7 @@ import { turfReviewRepository } from '../repositories/turfReviewRepository';
 import { turfBookingService } from '../services/turfBookingService';
 import { turfBookingRepository } from '../repositories/turfBookingRepository';
 import { availabilityEngine } from '../services/turfAvailabilityEngine';
-import { bookingRateLimiter, couponRateLimiter } from '../middleware/rateLimiter';
+import { bookingRateLimiter, couponRateLimiter } from '../infrastructure/distributedRateLimiter';
 import { sanitizeString } from '../middleware/validator';
 
 const router = Router();

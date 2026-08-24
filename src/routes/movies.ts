@@ -12,7 +12,7 @@ import {
 } from '../controllers/movieBookingController';
 import { movieBookingService } from '../services/movieBookingService';
 import { authMiddleware } from '../middleware/auth';
-import { bookingRateLimiter } from '../middleware/rateLimiter';
+import { bookingRateLimiter } from '../infrastructure/distributedRateLimiter';
 import type { AuthRequest } from '../middleware/auth';
 
 const router = Router();

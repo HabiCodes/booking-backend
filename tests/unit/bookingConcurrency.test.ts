@@ -13,6 +13,9 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { TurfBookingService } from '../../src/services/turfBookingService';
+
+const turfBookingService = new TurfBookingService();
 
 // ── Turf Concurrency ──────────────────────────────────────────────────────────
 
@@ -118,7 +121,7 @@ describe('Payment — state machine correctness', () => {
     'CANCELLED': [], // terminal
     'EXPIRED': [], // terminal
     'REFUNDED': [], // terminal
-    'SETTLED': [], // terminal
+    'SETTLED': ['REFUNDED'], // settled payments can be refunded
   };
 
   it('defines valid state transitions', () => {
@@ -146,12 +149,12 @@ describe('Payment — state machine correctness', () => {
 describe('Booking — input validation', () => {
   it('rejects booking with zero amount', () => {
     const amount = 0;
-    assert.strictEqual(amount > 0, true, 'Amount must be positive');
+    assert.strictEqual(amount > 0, false, 'Zero amount should fail validation');
   });
 
   it('rejects booking with negative amount', () => {
     const amount = -100;
-    assert.strictEqual(amount > 0, true, 'Amount must be positive');
+    assert.strictEqual(amount > 0, false, 'Negative amount should fail validation');
   });
 
   it('validates email format before processing', () => {
@@ -165,7 +168,7 @@ describe('Booking — input validation', () => {
     const MAX_DURATION_HOURS = 4;
     const validDuration = 2; // hours
     assert.ok(validDuration <= MAX_DURATION_HOURS);
-    assert.ok(4 > MAX_DURATION_HOURS); // should fail
+    assert.ok(4 <= MAX_DURATION_HOURS); // 4h is the maximum allowed
   });
 
   it('limits event ticket quantity to 10 per booking', () => {

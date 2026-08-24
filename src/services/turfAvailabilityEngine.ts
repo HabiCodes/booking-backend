@@ -861,13 +861,28 @@ export class AvailabilityEngine {
    * Transition a booking's availability unit to payment_pending.
    */
   async transitionToPaymentPending(unitId: number, userId: number): Promise<void> {
-    const redis = getRedis();
-    const lockKey = holdRedisKey(unitId);
-
-    // Verify we hold the Redis hint (non-critical — DB is authoritative)
-    const currentToken = await redis.get(lockKey);
-    if (!currentToken) {
+    // Verify there is an active hold in the DB (source of truth).
+    // Redis hint is checked as a fast-path but its absence is non-fatal.
+    const holdResult = await getPool().query(
+      `SELECT id FROM turf_holds
+       WHERE availability_unit_id = $1 AND status = 'active' AND expires_at > NOW()
+       LIMIT 1`,
+      [unitId]
+    );
+    if (holdResult.rows.length === 0) {
       throw new AppError('No active hold for this slot', 409);
+    }
+
+    // Best-effort: verify Redis hint exists (informational only)
+    try {
+      const redis = getRedis();
+      const lockKey = holdRedisKey(unitId);
+      const currentToken = await redis.get(lockKey);
+      if (!currentToken) {
+        logger.warn(`[AvailabilityEngine] Redis hint missing during transitionToPaymentPending for unit ${unitId} — DB is authoritative`);
+      }
+    } catch {
+      // Redis unavailable — DB check passed, proceed
     }
 
     await turfAvailabilityRepository.markPaymentPending(unitId, userId);
