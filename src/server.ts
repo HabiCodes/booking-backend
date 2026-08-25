@@ -402,8 +402,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
   try {
     // 2. Close Socket.IO
-    const { closeSocketServer } = await import('./sockets');
-    closeSocketServer();
+    await (await import('./sockets')).closeSocketServer();
     logger.info('Socket.IO closed');
 
     // 3. Stop availability scheduler

@@ -2,7 +2,7 @@ import { Server as IoServer } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import { createRedisIoAdapter } from '../infrastructure/redisSocketAdapter';
+import { createRedisIoAdapter, broadcastToRoom, closeSocketServer as closeAdapter } from '../infrastructure/redisSocketAdapter';
 
 let io: IoServer | null = null;
 
@@ -36,7 +36,7 @@ export function initSocketServer(httpServer: HttpServer): IoServer {
     });
   });
 
-  // Initialize Redis-backed cross-instance adapter
+  // Initialize Redis-backed cross-instance adapter (official @socket.io/redis-adapter)
   createRedisIoAdapter(io);
 
   return io;
@@ -48,22 +48,23 @@ export function getIo(): IoServer {
 }
 
 export async function broadcastBookingCount(eventId: number, booked: number, capacity: number) {
-  const { broadcastToRoom } = await import('../infrastructure/redisSocketAdapter');
-  await broadcastToRoom('live', 'event:booking-count', { eventId, booked, capacity });
+  if (!io) return;
+  await broadcastToRoom('live', 'event:booking-count', { eventId, booked, capacity }, io);
 }
 
 export async function broadcastNewBooking(payload: unknown) {
-  const { broadcastToRoom } = await import('../infrastructure/redisSocketAdapter');
-  await broadcastToRoom('live', 'event:new-booking', payload);
+  if (!io) return;
+  await broadcastToRoom('live', 'event:new-booking', payload, io);
 }
 
-export function closeSocketServer(): void {
+export async function closeSocketServer(): Promise<void> {
+  await closeAdapter();
   if (io) {
     try {
       io.close();
-      io = null;
     } catch {
       // ignore
     }
+    io = null;
   }
 }
