@@ -82,6 +82,7 @@ export interface EventRow {
   status: EventStatus;
   visibility: EventVisibility;
   is_featured: boolean;
+  is_free: boolean;
   is_active: boolean;
   cancel_window_hours: number;
   cancellable_until: string | null;
@@ -152,6 +153,7 @@ export interface EventCreateInput {
   capacity: number;
   remaining_capacity?: number;
   price?: number;
+  is_free?: boolean;
   currency?: string;
   status?: EventStatus;
   visibility?: EventVisibility;
@@ -161,6 +163,7 @@ export interface EventCreateInput {
 
 export interface EventUpdateInput extends Partial<EventCreateInput> {
   is_active?: boolean;
+  is_free?: boolean;
   cancel_window_hours?: number;
 }
 
@@ -168,7 +171,7 @@ export interface EventUpdateInput extends Partial<EventCreateInput> {
 // Bookings
 // ---------------------------------------------------------------------------
 
-export type BookingStatus = 'pending' | 'confirmed' | 'cancelled' | 'attended';
+export type BookingStatus = 'payment_pending' | 'pending' | 'confirmed' | 'cancelled' | 'attended';
 
 export interface BookingRow {
   id: number;
@@ -1007,6 +1010,31 @@ export interface OrganizerUserRow {
   updated_at: string;
 }
 
+export interface OrganizerRefreshTokenRow {
+  id: number;
+  organizer_user_id: number;
+  token_hash: string;
+  session_id: number | null;
+  device_info: string | null;
+  ip_address: string | null;
+  expires_at: string;
+  revoked: boolean;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export interface OrganizerSessionRow {
+  id: number;
+  organizer_user_id: number;
+  device_info: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  is_current: boolean;
+  revoked: boolean;
+  last_active_at: string;
+  created_at: string;
+}
+
 export interface OrganizerUserPublic {
   id: number;
   organization_id: number;
@@ -1358,7 +1386,7 @@ export interface CheckInRecord {
 // ---------------------------------------------------------------------------
 
 // --------------------------------------------------------------------------
-// Cashfree Payments (Migration 020)
+// Payments (Migration 020)
 // --------------------------------------------------------------------------
 
 export type PaymentOrderStatus =
@@ -1371,7 +1399,7 @@ export type PaymentOrderStatus =
   | 'PARTIALLY_REFUNDED'
   | 'REFUNDED';
 
-export type PaymentGateway = 'cashfree' | 'manual';
+export type PaymentGateway = 'federal_bank' | 'manual';
 
 export type VerificationSource = 'webhook' | 'api_poll';
 
@@ -1383,10 +1411,10 @@ export interface PaymentOrderRow {
   event_id: number;
   amount: string;
   currency: string;
-  cf_payment_id: string | null;
-  cf_order_token: string | null;
-  cf_payment_session_id: string | null;
-  cf_authorization_id: string | null;
+  provider_payment_id: string | null;
+  provider_order_token: string | null;
+  provider_session_id: string | null;
+  provider_authorization_id: string | null;
   status: PaymentOrderStatus;
   payment_method: string | null;
   payment_gateway: PaymentGateway;
@@ -1397,6 +1425,7 @@ export interface PaymentOrderRow {
   verified_by: VerificationSource | null;
   idempotency_key: string | null;
   retry_count: number;
+  financial_snapshot: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -1409,7 +1438,7 @@ export interface PaymentOrderPublic {
   event_id: number;
   amount: number;
   currency: string;
-  cf_payment_id: string | null;
+  provider_payment_id: string | null;
   status: PaymentOrderStatus;
   payment_method: string | null;
   payment_gateway: PaymentGateway;
@@ -1432,6 +1461,8 @@ export interface PaymentOrderCreateInput {
   currency?: string;
   idempotency_key?: string;
   payment_method?: string | null;
+  payment_gateway?: PaymentOrderRow['payment_gateway'];
+  financial_snapshot?: { [key: string]: unknown } | null;
 }
 
 export type RefundStatus = 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
@@ -1446,8 +1477,8 @@ export interface RefundRow {
   id: number;
   payment_order_id: number;
   booking_id: number;
-  cf_refund_id: string | null;
-  cf_refund_status: string | null;
+  provider_refund_id: string | null;
+  provider_refund_status: string | null;
   amount: string;
   currency: string;
   reason: string | null;
@@ -1464,8 +1495,8 @@ export interface RefundPublic {
   id: number;
   payment_order_id: number;
   booking_id: number;
-  cf_refund_id: string | null;
-  cf_refund_status: string | null;
+  provider_refund_id: string | null;
+  provider_refund_status: string | null;
   amount: number;
   currency: string;
   reason: string | null;
@@ -2087,6 +2118,8 @@ export interface TurfQRTicketRow {
   used_at: string | null;
   used_by: number | null;
   created_at: string;
+  qr_data: string | null;
+  metadata: Record<string, unknown> | null;
 }
 
 export interface TurfQRTicketPublic {
@@ -2095,7 +2128,10 @@ export interface TurfQRTicketPublic {
   token: string;
   status: string;
   used_at: string | null;
+  used_by: number | null;
   created_at: string;
+  qr_data: string | null;
+  metadata: Record<string, unknown> | null;
 }
 
 export interface TurfCouponRow {
@@ -2196,6 +2232,41 @@ export interface TurfSettlementPublic {
 }
 
 export interface TurfSettlementItemRow {
+  id: number;
+  settlement_id: number;
+  booking_id: number;
+  gross_amount: string;
+  commission_amount: string;
+  tax_amount: string;
+  net_amount: string;
+  created_at: string;
+}
+
+/** Movie domain uses the same settlement tables with the same structure */
+export type MovieSettlementRow = TurfSettlementRow;
+export type MovieSettlementItemRow = TurfSettlementItemRow;
+
+/** Event settlement row */
+export interface EventSettlementRow {
+  id: number;
+  organization_id: number;
+  gross_amount: string;
+  commission_amount: string;
+  tax_amount: string;
+  net_amount: string;
+  status: string;
+  gateway_payout_id: string | null;
+  scheduled_at: string;
+  completed_at: string | null;
+  failure_reason: string | null;
+  retry_count: number;
+  max_retries: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Event settlement item row */
+export interface EventSettlementItemRow {
   id: number;
   settlement_id: number;
   booking_id: number;
@@ -2398,7 +2469,8 @@ export type LedgerEntryType =
   | 'payment_received' | 'refund_issued' | 'platform_fee' | 'gst_collected'
   | 'gst_refunded' | 'commission_earned' | 'commission_reversed'
   | 'settlement_paid' | 'cancellation_fee' | 'coupon_discount'
-  | 'ad_revenue' | 'sponsorship_revenue' | 'platform_fee_refunded' | 'adjustment';
+  | 'ad_revenue' | 'sponsorship_revenue' | 'platform_fee_refunded' | 'adjustment'
+  | 'tds_collected' | 'settlement_pending';
 
 export type LedgerDirection = 'debit' | 'credit';
 export type LedgerReferenceType = 'booking' | 'refund' | 'settlement' | 'coupon'

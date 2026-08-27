@@ -19,11 +19,15 @@ import { movieBookingRepository } from '../repositories/movieBookingRepository';
 import { movieBookingItemRepository } from '../repositories/movieBookingItemRepository';
 import { movieTicketRepository } from '../repositories/movieTicketRepository';
 import { moviePriceCapRepository } from '../repositories/moviePriceCapRepository';
+import { movieSettlementRepository } from '../repositories/movieSettlementRepository';
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
-import { paymentService } from '../services/promotionService';
+import { getPaymentService, PaymentService } from './paymentService';
 import { financialConfigService } from '../services/financialConfigService';
 import { calculateBookingFinancials } from '../services/financialCalculator';
+import { PricingEngine } from './pricingEngine';
+import type { PricingBreakdown, FinancialSnapshot } from './pricingEngine';
 import { signTicket } from '../utils/qrCode';
+import { UniversalTicketService } from '../services/universalTicketService';
 import type {
   MovieBookingRow,
   MovieBookingWithDetails,
@@ -239,9 +243,48 @@ export class MovieBookingService {
       throw new AppError(`Seat ${doubleBooked.row_label}${doubleBooked.seat_number} is already booked`, 409);
     }
 
-    // Price calculation with price caps
-    const prices = await this._calculateSeatPrices(showtime, seats, cinema);
-    const totalAmount = prices.reduce((sum, p) => sum + p.finalPricePaise, 0);
+    // Price calculation with PricingEngine (GST + platform fee)
+    const pricingEngine = new PricingEngine();
+    const seatPrices = await this._calculateSeatPrices(showtime, seats, cinema);
+
+    // Online movie: GST 18% + ₹20 platform fee per ticket
+    let totalAmountPaise = 0;
+    let totalAmountPaiseBreakdown: PricingBreakdown | null = null;
+    const seatPricingResults: Array<{ seatId: number; totalPaise: number; basePaise: number }> = [];
+    for (const seatPrice of seatPrices) {
+      const breakdown = pricingEngine.calculate({
+        domain: 'movie_online',
+        unitPricePaise: seatPrice.finalPricePaise,
+        quantity: 1,
+        currency: 'INR',
+      });
+      totalAmountPaise += breakdown.totalPaise;
+      totalAmountPaiseBreakdown = breakdown; // last seat breakdown has per-ticket values
+      seatPricingResults.push({ seatId: seatPrice.seatId, totalPaise: breakdown.totalPaise, basePaise: seatPrice.finalPricePaise });
+    }
+    const totalAmount = totalAmountPaise;
+    // Reconstruct aggregate breakdown for financial snapshot
+    if (totalAmountPaiseBreakdown) {
+      const perSeat = totalAmountPaiseBreakdown;
+      totalAmountPaiseBreakdown = {
+        domain: 'movie_online' as const,
+        unitPricePaise: perSeat.unitPricePaise,
+        quantity: seatIds.length,
+        subtotalPaise: perSeat.subtotalPaise * seatIds.length,
+        discountPaise: perSeat.discountPaise * seatIds.length,
+        taxableAmountPaise: perSeat.taxableAmountPaise * seatIds.length,
+        cgstPaise: perSeat.cgstPaise * seatIds.length,
+        sgstPaise: perSeat.sgstPaise * seatIds.length,
+        gstTotalPaise: perSeat.gstTotalPaise * seatIds.length,
+        gstInclusivePaise: perSeat.gstInclusivePaise * seatIds.length,
+        platformFeePaise: perSeat.platformFeePaise * seatIds.length,
+        totalPaise: totalAmountPaise,
+        currency: 'INR',
+        pricingRuleVersion: perSeat.pricingRuleVersion,
+        calculatedAt: perSeat.calculatedAt,
+        perUnitBreakdown: perSeat.perUnitBreakdown,
+      } as unknown as PricingBreakdown;
+    }
 
     // Idempotency check
     const idempotencyKey = input.idempotencyKey || generateIdempotencyKey(userId, showtimeId);
@@ -287,7 +330,7 @@ export class MovieBookingService {
           showtimeId, totalAmount, 'INR', seatIds.length,
           'pending_payment', 'initiated',
           idempotencyKey, holdExpiresAt,
-          JSON.stringify({ prices: prices.map(p => ({ seatId: p.seatId, price: p.finalPricePaise, seatType: p.seatType })) }),
+          JSON.stringify({ prices: seatPrices.map(p => ({ seatId: p.seatId, price: p.finalPricePaise, seatType: p.seatType })) }),
         ]
       );
       const booking = bookingResult.rows[0] as MovieBookingRow;
@@ -296,7 +339,7 @@ export class MovieBookingService {
       try {
         for (let i = 0; i < seats.length; i++) {
           const seat = seats[i];
-          const priceInfo = prices.find(p => p.seatId === seat.id)!;
+          const priceInfo = seatPrices.find(p => p.seatId === seat.id)!;
           const itemResult = await client.query(
             `INSERT INTO movie_booking_items
               (booking_id, showtime_id, seat_id, seat_label, row_label, seat_number, seat_type, seat_category, price, currency)
@@ -336,17 +379,11 @@ export class MovieBookingService {
     // Post-commit: Create payment order
     const orderId = `MOV_${Date.now()}_${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 
-    const paymentOrder = await paymentOrderRepository.create({
-      order_id: orderId,
-      booking_id: booking.id,
-      organization_id: cinema.organization_id ?? 0,
-      movie_id: showtime.movie_id,
-      amount: totalAmount,
-      currency: 'INR',
-      idempotency_key: `movie_pay_${booking.id}`,
-    });
-
-    // Post-commit: Create Cashfree payment order
+    // Post-commit: Create payment order via payment provider
+    const paymentService = getPaymentService();
+    const financialSnapshot: FinancialSnapshot | null = totalAmountPaiseBreakdown
+      ? PricingEngine.toSnapshot(totalAmountPaiseBreakdown, 'online')
+      : null;
     const paymentResult = await paymentService.createOrder({
       booking_id: booking.id,
       order_id: orderId,
@@ -359,6 +396,7 @@ export class MovieBookingService {
       organization_id: cinema.organization_id ?? 0,
       movie_id: showtime.movie_id,
       idempotency_key: `movie_pay_${booking.id}`,
+      financial_snapshot: financialSnapshot as { [key: string]: unknown } | null,
     });
 
     // Cache idempotency
@@ -423,20 +461,26 @@ export class MovieBookingService {
         throw new AppError('Payment not confirmed for this booking', 409);
       }
 
+      // Verify payment amount matches server-calculated amount
+      // booking.amount = totalAmountPaise (paise), paymentOrder.amount = totalAmountPaise (paise string)
+      const expectedAmountPaise = Math.round(Number(booking.amount));
+      const paidAmountPaise = Math.round(Number(paymentOrder.amount));
+      const paymentService = getPaymentService();
+      paymentService.verifyPaymentAmount(expectedAmountPaise, paidAmountPaise);
+
       // Update booking status
       await movieBookingRepository.updateStatus(bookingId, 'confirmed');
       await movieBookingRepository.updatePaymentStatus(bookingId, 'captured');
 
-      await client.query('COMMIT');
-
-      // Post-commit: Generate tickets
+      // Generate tickets atomically inside the transaction
+      // If ticket creation fails, the entire confirmation rolls back
       const items = await movieBookingItemRepository.findByBooking(bookingId);
       const ticketUuids: string[] = [];
 
       for (const item of items) {
-        const ticketUuid = crypto.randomBytes(16).toString('hex');
+        const ticketUuid = UniversalTicketService.generateTicketUuid('movie');
         ticketUuids.push(ticketUuid);
-        const signature = signTicket({ ticket_uuid: ticketUuid }, booking.showtime_id, '');
+        const signature = UniversalTicketService.sign({ domain: 'movie', ticketUuid, entityId: booking.showtime_id, startAt: '' });
 
         const qrData = JSON.stringify({
           ref: booking.booking_reference,
@@ -444,6 +488,7 @@ export class MovieBookingService {
           seat: item.seat_label,
           row: item.row_label,
           showtime: booking.showtime_id,
+          domain: 'movie',
         });
 
         await movieTicketRepository.create({
@@ -460,7 +505,9 @@ export class MovieBookingService {
         });
       }
 
-      // Post-commit: Release Redis holds
+      await client.query('COMMIT');
+
+      // Post-commit: Release Redis holds (safe to do after commit — holds already locked)
       const showtime = await showtimeRepository.findById(booking.showtime_id);
       if (showtime) {
         const holdKey = `movie:hold:${showtime.id}`;
@@ -474,7 +521,11 @@ export class MovieBookingService {
       }
 
       // Post-commit: Settlement
-      const grossAmountPaise = parseInt(paymentOrder.amount, 10);
+      // Use base subtotal from financial snapshot (pre-GST, pre-platform-fee)
+      const snapshot = (paymentOrder as any).financial_snapshot as Record<string, unknown> | null;
+      const grossAmountPaise = typeof snapshot?.subtotalPaise === 'number' && snapshot.subtotalPaise > 0
+        ? snapshot.subtotalPaise
+        : Math.round(Number(paymentOrder.amount));
       await this._createSettlement(booking, grossAmountPaise);
 
       await audit(booking.id, 'booking.confirmed', {
@@ -1014,19 +1065,15 @@ export class MovieBookingService {
       config: configSnapshot,
     });
 
-    const { turfSettlementRepository } = await import('../repositories/turfSettlementRepository');
-    const existing = await turfSettlementRepository.findItemByBooking(booking.id);
-    if (existing) return;
-
-    const pendingList = await turfSettlementRepository.findPendingByOrg(orgId);
+    const pendingList = await movieSettlementRepository.findPendingByOrg(orgId);
     let settlement = pendingList[0];
     if (!settlement) {
-      settlement = await turfSettlementRepository.create({ organization_id: orgId });
+      settlement = await movieSettlementRepository.findOrCreatePendingSettlement(orgId);
     }
-    await turfSettlementRepository.addItem({
+    await movieSettlementRepository.addItem({
       settlement_id: settlement.id,
       booking_id: booking.id,
-      gross_amount: grossAmount / 100,
+      gross_amount: grossAmountPaise / 100,
       commission_amount: parseFloat((breakdown.commission_paise / 100).toFixed(2)),
       tax_amount: parseFloat((breakdown.gst_on_platform_fee_paise / 100).toFixed(2)),
       net_amount: parseFloat((breakdown.net_payable_to_business_paise / 100).toFixed(2)),

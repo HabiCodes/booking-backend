@@ -8,6 +8,22 @@ import { AppError } from '../middleware/errorHandler';
 import { generateBookingPdf } from '../services/pdfService';
 import { sanitizeString, validatePhone, validateAge, validateGender } from '../middleware/validator';
 import { broadcastBookingCount, broadcastNewBooking } from '../sockets';
+import { FederalBankPaymentProvider } from '../services/federalBankProvider';
+import { createPaymentService } from '../services/paymentService';
+import { pricingEngine, PricingEngine } from '../services/pricingEngine';
+import type { PricingBreakdown, FinancialSnapshot } from '../services/pricingEngine';
+
+// ── Local PaymentService lazy initialization ───────────────────────────────────
+// Uses local instance to avoid the shared singleton crash.
+// Pattern matches turfPaymentRoutes.ts and promotionService.ts.
+let paymentService: ReturnType<typeof createPaymentService> | null = null;
+function getLocalPaymentService() {
+  if (!paymentService) {
+    const provider = new FederalBankPaymentProvider(config.paymentProvider);
+    paymentService = createPaymentService(provider);
+  }
+  return paymentService;
+}
 
 export async function createBooking(
   req: AuthRequest,
@@ -46,32 +62,117 @@ export async function createBooking(
       throw new AppError('Invalid event_id', 400);
     }
 
-    const result = await bookingService.createBooking(
+    // ── Free event: book immediately ──────────────────────────────────────────
+    const event = await eventRepository.getEventById(parsedEventId);
+    if (!event) throw new AppError('Event not found', 404);
+
+    if (event.is_free) {
+      const result = await bookingService.createBooking(
+        req.user.id,
+        parsedEventId,
+        attendees
+      );
+
+      const stats = await eventRepository.getBookingStats(parsedEventId);
+      broadcastBookingCount(parsedEventId, stats.bookedCount, stats.capacity);
+      broadcastNewBooking({
+        bookingId: result.bookingId,
+        user: { email: req.user.email },
+        eventId: parsedEventId,
+        ticketCount: attendees.length,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: {
+          bookingId: result.bookingId,
+          ticketCount: attendees.length,
+          status: 'confirmed',
+          tickets: result.tickets.map((t) => ({
+            ticketUuid: t.ticket_uuid,
+            attendeeName: t.attendee_name,
+            attendeePhone: t.attendee_phone,
+            signature: t.signature,
+          })),
+        },
+      });
+      return;
+    }
+
+    // ── Paid event: create booking + payment order ────────────────────────────
+    const ticketCount = attendees.length;
+    const eventPricePaise = Math.round(Number(event.price) * 100);
+
+    // ── Authoritative pricing via PricingEngine ─────────────────────────────
+    const pricingBreakdown = pricingEngine.calculate({
+      domain: 'event',
+      unitPricePaise: eventPricePaise,
+      quantity: ticketCount,
+    });
+
+    const bookingResult = await bookingService.createBooking(
       req.user.id,
       parsedEventId,
       attendees
     );
 
+    // Fetch user details for payment
+    const userResult = await (require('../db/pool').getPool()).query(
+      'SELECT email, username, phone FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const user = userResult.rows[0];
+
+    // Create payment order via universal payment service
+    const orderId = `evt_${bookingResult.bookingId}_${Date.now()}`;
+    const paymentService = getLocalPaymentService();
+    const paymentResult = await paymentService.createOrder({
+      booking_id: bookingResult.bookingId,
+      event_id: parsedEventId,
+      order_id: orderId,
+      organization_id: event.organization_id ?? 0,
+      amount: pricingBreakdown.totalPaise,
+      currency: event.currency || 'INR',
+      idempotency_key: `evt_pay_${bookingResult.bookingId}`,
+      customerEmail: user?.email || '',
+      customerPhone: user?.phone || '',
+      customerName: user?.username || user?.email || `User ${req.user.id}`,
+      orderId,
+      financial_snapshot: PricingEngine.toSnapshot(pricingBreakdown, 'online') as unknown as Record<string, unknown>,
+      metadata: {
+        source: 'event',
+        ticketCount,
+      },
+    });
+
     const stats = await eventRepository.getBookingStats(parsedEventId);
     broadcastBookingCount(parsedEventId, stats.bookedCount, stats.capacity);
     broadcastNewBooking({
-      bookingId: result.bookingId,
+      bookingId: bookingResult.bookingId,
       user: { email: req.user.email },
       eventId: parsedEventId,
       ticketCount: attendees.length,
     });
 
-    res.status(201).json({
+    // Return 202 Accepted — booking is in payment_pending state
+    res.status(202).json({
       success: true,
       data: {
-        bookingId: result.bookingId,
+        bookingId: bookingResult.bookingId,
+        status: 'payment_pending',
         ticketCount: attendees.length,
-        tickets: result.tickets.map((t) => ({
+        tickets: bookingResult.tickets.map((t) => ({
           ticketUuid: t.ticket_uuid,
           attendeeName: t.attendee_name,
           attendeePhone: t.attendee_phone,
           signature: t.signature,
         })),
+        payment: {
+          orderId: paymentResult.order.order_id,
+          amount: pricingBreakdown.totalPaise,
+          currency: event.currency || 'INR',
+          paymentSessionId: paymentResult.paymentSessionId,
+        },
       },
     });
     return;

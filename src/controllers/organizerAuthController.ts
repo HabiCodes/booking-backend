@@ -80,12 +80,9 @@ export async function refresh(req: Request, res: Response, next: NextFunction) {
       throw new AppError('Refresh token is required', 400);
     }
 
-    const payload = organizerAuthService.verifyRefreshToken(refreshToken);
-    if (!payload) {
-      throw new AppError('Invalid or expired refresh token', 401);
-    }
-
-    const result = await organizerAuthService.refreshUserTokens(payload.sub);
+    // Use the full rotation flow: verifies typ, hashes, finds+consumes in DB,
+    // detects reuse, validates user still active, and issues new tokens.
+    const result = await organizerAuthService.refreshTokens(refreshToken);
     if (!result) {
       throw new AppError('User not found or inactive', 401);
     }

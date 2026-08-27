@@ -11,10 +11,14 @@ export class TurfSettlementRepository {
     return (rows as TurfSettlementRow[])[0] || null;
   }
 
-  async findPendingByOrg(orgId: number): Promise<TurfSettlementRow[]> {
+  async findPendingByOrg(orgId?: number): Promise<TurfSettlementRow[]> {
+    const whereClause = orgId !== undefined
+      ? 'organization_id = $1 AND scheduled_at <= NOW()'
+      : '1=1';
+    const params = orgId !== undefined ? [orgId] : [];
     const { rows } = await getPool().query(
-      `SELECT * FROM turf_settlements WHERE organization_id = $1 AND status = 'pending' AND net_amount >= 500 AND retry_count < max_retries ORDER BY scheduled_at ASC LIMIT 20`,
-      [orgId]
+      `SELECT * FROM turf_settlements WHERE ${whereClause} AND status = 'pending' AND net_amount >= 500 AND retry_count < max_retries AND scheduled_at <= NOW() ORDER BY scheduled_at ASC LIMIT 20`,
+      params
     );
     return rows as TurfSettlementRow[];
   }
@@ -29,10 +33,10 @@ export class TurfSettlementRepository {
 
   async addItem(input: { settlement_id: number; booking_id: number; gross_amount: number; commission_amount: number; tax_amount: number; net_amount: number }): Promise<TurfSettlementItemRow> {
     const { rows } = await getPool().query(
-      `INSERT INTO turf_settlement_items (settlement_id, booking_id, gross_amount, commission_amount, tax_amount, net_amount) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      `INSERT INTO turf_settlement_items (settlement_id, booking_id, gross_amount, commission_amount, tax_amount, net_amount) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (booking_id) DO NOTHING RETURNING *`,
       [input.settlement_id, input.booking_id, input.gross_amount, input.commission_amount, input.tax_amount, input.net_amount]
     );
-    return rows[0] as TurfSettlementItemRow;
+    return (rows as TurfSettlementItemRow[])[0] || null as unknown as TurfSettlementItemRow;
   }
 
   async findItemByBooking(bookingId: number): Promise<TurfSettlementItemRow | null> {
@@ -41,6 +45,18 @@ export class TurfSettlementRepository {
       [bookingId]
     );
     return (rows as TurfSettlementItemRow[])[0] || null;
+  }
+
+  async findOrCreatePendingSettlement(orgId: number): Promise<TurfSettlementRow> {
+    const { rows } = await getPool().query(
+      `INSERT INTO turf_settlements (organization_id, scheduled_at)
+       VALUES ($1, "NOW() + INTERVAL '12 hours'")
+       ON CONFLICT (organization_id) WHERE status = 'pending'
+       DO UPDATE SET updated_at = NOW()
+       RETURNING *`,
+      [orgId]
+    );
+    return rows[0] as TurfSettlementRow;
   }
 
   async incrementRetry(id: number, failureReason: string): Promise<void> {

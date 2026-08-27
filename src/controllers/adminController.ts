@@ -312,7 +312,7 @@ export async function adminCancelBooking(req: AdminRequest, res: Response, next:
     const reason = (req.body?.reason as string | undefined) ?? 'Cancelled by admin';
 
     const { bookingRepository } = await import('../repositories/bookingRepository');
-    const result = await bookingRepository.cancelBooking(bookingId, 0, reason);
+    const result = await bookingRepository.cancelBooking(bookingId, undefined, reason);
 
     if (!result.cancelled) {
       return next(new AppError('Booking not found or already cancelled', 404));

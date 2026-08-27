@@ -19,6 +19,7 @@
 
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 import type {
   PromotionPackageRow,
   PromotionPackageCreateInput,
@@ -52,6 +53,7 @@ import { promotionAttributionRepository } from '../repositories/promotionAttribu
 import type { PaymentOrderCreateInput } from '../types';
 import type { PaymentService } from './paymentService';
 import { createPaymentService } from './paymentService';
+import { FederalBankPaymentProvider } from './federalBankProvider';
 
 // ── Service Initialization ─────────────────────────────────────────────────────
 
@@ -63,13 +65,8 @@ let paymentServiceInstance: PaymentService | null = null;
 
 function getPaymentService(): PaymentService {
   if (!paymentServiceInstance) {
-    paymentServiceInstance = createPaymentService({
-      appId: process.env.CASHFREE_APP_ID || '',
-      secretKey: process.env.CASHFREE_SECRET_KEY || '',
-      webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || '',
-      returnUrl: process.env.CASHFREE_RETURN_URL || '',
-      notifyUrl: process.env.CASHFREE_NOTIFY_URL || '',
-    });
+    const provider = new FederalBankPaymentProvider(config.paymentProvider);
+    paymentServiceInstance = createPaymentService(provider);
   }
   return paymentServiceInstance;
 }

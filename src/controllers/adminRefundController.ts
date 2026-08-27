@@ -4,7 +4,19 @@ import { AppError } from '../middleware/errorHandler';
 import { refundRepository } from '../repositories/refundRepository';
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
 import { logger } from '../utils/logger';
-import { getPaymentService } from '../services/paymentService';
+import { createPaymentService } from '../services/paymentService';
+import { FederalBankPaymentProvider } from '../services/federalBankProvider';
+import { config } from '../config';
+
+// Local PaymentService lazy initialization
+let paymentService: ReturnType<typeof createPaymentService> | null = null;
+function getLocalPaymentService() {
+  if (!paymentService) {
+    const provider = new FederalBankPaymentProvider(config.paymentProvider);
+    paymentService = createPaymentService(provider);
+  }
+  return paymentService;
+}
 
 /**
  * GET /api/v1/admin/refunds
@@ -73,7 +85,7 @@ export async function adminCreateRefund(req: AdminRequest, res: Response, next: 
     const order = await paymentOrderRepository.findById(paymentOrderId);
     if (!order) throw new AppError('Payment order not found', 404);
 
-    const result = await getPaymentService().processRefund(
+    const result = await getLocalPaymentService().processRefund(
       {
         payment_order_id: paymentOrderId,
         booking_id: order.booking_id,

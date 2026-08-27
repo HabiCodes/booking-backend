@@ -13,7 +13,6 @@ import { turfBookingRepository } from '../repositories/turfBookingRepository';
 import { turfQRRepository } from '../repositories/turfQRRepository';
 import { turfCouponRepository } from '../repositories/turfCouponRepository';
 import { turfSettlementRepository } from '../repositories/turfSettlementRepository';
-import { turfRefundRepository } from '../repositories/turfRefundRepository';
 import { turfWalletRepository } from '../repositories/turfWalletRepository';
 import { turfVenueRepository } from '../repositories/turfVenueRepository';
 import { turfResourceRepository } from '../repositories/turfResourceRepository';
@@ -21,7 +20,10 @@ import { turfReviewRepository } from '../repositories/turfReviewRepository';
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
 import { availabilityEngine } from './turfAvailabilityEngine';
 import { financialConfigService } from './financialConfigService';
+import { PricingEngine } from './pricingEngine';
 import { calculateBookingFinancials } from './financialCalculator';
+import { UniversalTicketService } from '../services/universalTicketService';
+import { getPaymentService } from './paymentService';
 
 const CORRELATION_PREFIX = 'turf_booking';
 const MAX_QUANTITY = 10;
@@ -203,9 +205,18 @@ export class TurfBookingService {
         couponId = coupon.id;
       }
 
-      const finalAmount = Math.round(((parseFloat(unit.price ?? resource.base_price) * quantity) - discountAmount) * 100) / 100;
+      // ── Price via PricingEngine ───────────────────────────────────────────────
+      const unitPricePaise = Math.round(parseFloat(unit.price ?? resource.base_price) * 100);
+      const pricingEngine = new PricingEngine();
+      const pricingBreakdown = pricingEngine.calculate({
+        domain: 'turf',
+        unitPricePaise,
+        quantity,
+        currency: 'INR',
+        discountPaise: Math.round(discountAmount * 100),
+      });
 
-      // ── Insert Booking ────────────────────────────────────────────────────
+      // ── Insert Booking ────────────────────────────────────────────────────────
       const bookingRef = generateBookingReference();
       const bookingResult = await client.query(
         `INSERT INTO turf_bookings
@@ -214,8 +225,8 @@ export class TurfBookingService {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_payment','initiated',$10::jsonb)
          RETURNING *`,
         [bookingRef, userId, venue.organization_id, venue.id, resource.id, unit.id,
-         input.booking_type ?? 'online', quantity, finalAmount,
-         JSON.stringify({ correlationId, discountAmount, couponCode: input.coupon_code ?? null, idempotencyKey })]
+         input.booking_type ?? 'online', quantity, pricingBreakdown.totalPaise / 100,
+         JSON.stringify({ correlationId, discountAmount, couponCode: input.coupon_code ?? null, idempotencyKey, pricingSnapshot: pricingBreakdown })]
       );
       const booking = bookingResult.rows[0];
 
@@ -240,13 +251,17 @@ export class TurfBookingService {
 
       await audit(booking.id, 'booking.created', {
         actorId: actor.actorId, actorType: actor.actorType,
-        details: { amount: finalAmount, unitId, resourceId: resource.id, venueId: venue.id, correlationId },
+        details: {
+          amount: pricingBreakdown.totalPaise / 100,
+          unitId, resourceId: resource.id, venueId: venue.id,
+          correlationId, pricingSnapshot: pricingBreakdown,
+        },
       });
 
-      logger.info(`[TurfBooking] Created: ${booking.booking_reference}, amount: ${finalAmount}`);
+      logger.info(`[TurfBooking] Created: ${booking.booking_reference}, amount: ${pricingBreakdown.totalPaise / 100}`);
 
       return {
-        booking: { ...booking, amount: finalAmount },
+        booking: { ...booking, amount: pricingBreakdown.totalPaise / 100 },
         couponDiscount: discountAmount,
         correlationId,
       };
@@ -294,6 +309,12 @@ export class TurfBookingService {
         throw new AppError('Payment not confirmed for this booking', 409);
       }
 
+      // Verify payment amount matches server-calculated expected amount
+      const turfPaymentService = getPaymentService();
+      const expectedPaise = Math.round(parseFloat(booking.amount) * 100);
+      const paidPaise = Math.round(parseFloat(paymentOrder.amount) * 100);
+      turfPaymentService.verifyPaymentAmount(expectedPaise, paidPaise);
+
       await turfAvailabilityRepository.markBooked(booking.availability_unit_id);
 
       // Release coupon reservation
@@ -312,7 +333,7 @@ export class TurfBookingService {
 
       const updated = await turfBookingRepository.updateStatus(bookingId, 'confirmed', {
         payment_status: 'captured',
-        payment_gateway_ref: paymentOrder.cf_payment_id || undefined,
+        payment_gateway_ref: paymentOrder.provider_payment_id || undefined,
       });
 
       await client.query('COMMIT');
@@ -365,6 +386,12 @@ export class TurfBookingService {
         throw new AppError('Booking not found', 404);
       }
 
+      // Ownership check: user can only cancel their own booking
+      if (booking.user_id !== userId) {
+        await client.query('ROLLBACK');
+        throw new AppError('Not your booking', 403);
+      }
+
       assertTransition(booking.status, TURF_BOOKING_STATES.CANCELLED);
 
       const slotStart = new Date(booking.starts_at);
@@ -375,8 +402,8 @@ export class TurfBookingService {
         throw new AppError('Cancellation allowed only 2 hours before slot', 409);
       }
 
-      const refundEligible = hoursUntilSlot >= 24;
-      const newStatus = refundEligible ? 'refunded' : 'cancelled';
+      // NO CUSTOMER REFUND POLICY: always cancel, never refund
+      const newStatus = 'cancelled';
 
       await turfAvailabilityRepository.markAvailable(booking.availability_unit_id);
       await turfQRRepository.revokeByBooking(bookingId);
@@ -412,13 +439,9 @@ export class TurfBookingService {
         }).catch(err => logger.error(`[TurfWallet] Reverse failed:`, err));
       }
 
-      if (refundEligible) {
-        await this._processRefund(bookingId, parseFloat(booking.amount), reason);
-      }
-
       await audit(bookingId, 'booking.cancelled', {
         actorId: actor.actorId, actorType: actor.actorType,
-        details: { oldStatus: booking.status, newStatus, refundEligible, reason },
+        details: { oldStatus: booking.status, newStatus, reason },
       });
 
       logger.info(`[TurfBooking] Cancelled: ${booking.booking_reference} → ${newStatus}`);
@@ -452,6 +475,12 @@ export class TurfBookingService {
       if (booking.status !== 'confirmed') {
         await client.query('ROLLBACK');
         throw new AppError(`Cannot check in: booking is ${booking.status}`, 409);
+      }
+
+      // Ownership check: only the booking owner can check in
+      if (booking.user_id !== actor.actorId) {
+        await client.query('ROLLBACK');
+        throw new AppError('Not your booking', 403);
       }
 
       const updated = await turfBookingRepository.updateStatus(bookingId, 'checked_in');
@@ -644,24 +673,38 @@ export class TurfBookingService {
   // ── Private: QR Generation ─────────────────────────────────────────────────
 
   private async _generateQRTicket(booking: any): Promise<string> {
-    const randomBytes = crypto.randomBytes(16);
-    const token = `${Date.now().toString(36)}${randomBytes.toString('base64url').slice(0, 22)}`;
-    const qrTicket = await turfQRRepository.create(booking.id, token);
+    const ticketUuid = UniversalTicketService.generateTicketUuid('turf');
 
-    const { signTicket } = await import('../utils/qrCode');
-    const slotStart = (booking.metadata && (booking.metadata as any).slot_start) || new Date().toISOString();
-    const signature = signTicket(
-      { ticket_uuid: `turf_${token}` },
-      booking.venue_id,
-      slotStart
+    // Look up slot start from availability_unit (turf_bookings doesn't store starts_at directly)
+    const auResult = await getPool().query(
+      'SELECT starts_at FROM turf_availability_units WHERE id = $1',
+      [booking.availability_unit_id]
     );
+    const signedSlotStart = auResult.rows[0]?.starts_at || new Date().toISOString();
+
+    const signature = UniversalTicketService.sign({
+      domain: 'turf',
+      ticketUuid,
+      entityId: booking.venue_id,
+      startAt: signedSlotStart,
+    });
+
+    const qrSlotStart = (booking.metadata && (booking.metadata as any).slot_start) || signedSlotStart;
+    const qrTicket = await turfQRRepository.create(booking.id, ticketUuid);
+    const qrData = JSON.stringify({
+      ref: booking.booking_reference,
+      ticket: ticketUuid,
+      venue: booking.venue_id,
+      slot: qrSlotStart,
+      domain: 'turf',
+    });
 
     await getPool().query(
-      'UPDATE turf_qr_tickets SET metadata = $1 WHERE id = $2',
-      [JSON.stringify({ signature, signed_at: new Date().toISOString() }), qrTicket.id]
+      'UPDATE turf_qr_tickets SET qr_data = $1, metadata = $2 WHERE id = $3',
+      [qrData, JSON.stringify({ signature, signed_at: new Date().toISOString() }), qrTicket.id]
     );
 
-    return token;
+    return ticketUuid;
   }
 
   // ── Private: Settlement ────────────────────────────────────────────────────
@@ -669,13 +712,36 @@ export class TurfBookingService {
   // Commission: financial_configs (config_type='commission', scope='global' or 'organization')
   // TDS: financial_configs (config_type='tds')
   // No hardcoded rates in this method.
+  //
+  // IMPORTANT: grossAmount passed here is the CUSTOMER TOTAL (base + GST + platform fee).
+  // We must extract the BASE SUBTOTAL (pre-GST, pre-platform-fee) before passing
+  // to calculateBookingFinancials, otherwise the platform fee would be double-counted.
+  // The base subtotal is extracted from the pricingSnapshot stored in booking metadata.
+  // Fallback: reverse-calculate from total using the known 18% GST + ₹50 flat formula.
 
   private async _createSettlement(bookingId: number, orgId: number, grossAmount: number) {
     const existing = await turfSettlementRepository.findItemByBooking(bookingId);
     if (existing) return; // Idempotent
 
-    const grossAmountPaise = Math.round(grossAmount * 100);
     const configSnapshot = await financialConfigService.getSnapshot(orgId);
+
+    // Extract base subtotal from pricing snapshot in booking metadata.
+    // The PricingEngine stores a pricingSnapshot in the metadata JSONB column
+    // containing subtotalPaise (base amount before GST + platform fee).
+    // The base subtotal is the authoritative gross amount for settlement.
+    // Fallback: reverse-calculate from customer total using known 18% GST + ₹50 flat.
+    const booking = await turfBookingRepository.findById(bookingId);
+    const snapshot = booking?.metadata?.pricingSnapshot as
+      | { subtotalPaise?: number }
+      | undefined;
+    let grossAmountPaise: number;
+    if (snapshot?.subtotalPaise && snapshot.subtotalPaise > 0) {
+      grossAmountPaise = snapshot.subtotalPaise;
+    } else {
+      // Reverse-calculate: totalPaise = subtotalPaise * 1.18 + 5000
+      // => subtotalPaise = (totalPaise - 5000) / 1.18
+      grossAmountPaise = Math.round((grossAmount * 100 - 5000) / 1.18);
+    }
 
     const breakdown = calculateBookingFinancials({
       gross_amount_paise: grossAmountPaise,
@@ -683,6 +749,7 @@ export class TurfBookingService {
     });
 
     // Convert paise → INR with 2dp, matching the DB column convention.
+    const baseAmount = parseFloat((grossAmountPaise / 100).toFixed(2));
     const commissionAmount = parseFloat((breakdown.commission_paise / 100).toFixed(2));
     const tdsAmount = parseFloat((breakdown.tds_paise / 100).toFixed(2));
     const netAmount = parseFloat((breakdown.net_payable_to_business_paise / 100).toFixed(2));
@@ -692,12 +759,13 @@ export class TurfBookingService {
     if (!settlement) {
       settlement = await turfSettlementRepository.create({ organization_id: orgId });
     }
+    const taxAmount = parseFloat((breakdown.gst_on_platform_fee_paise / 100).toFixed(2));
     await turfSettlementRepository.addItem({
       settlement_id: settlement.id,
       booking_id: bookingId,
-      gross_amount: grossAmount,
+      gross_amount: baseAmount,
       commission_amount: commissionAmount,
-      tax_amount: 0,
+      tax_amount: taxAmount,
       net_amount: netAmount,
     });
   }
@@ -719,25 +787,6 @@ export class TurfBookingService {
       description: `Earned ${coins} coins from booking`,
       actor_type: 'system',
     }).catch(err => logger.error(`[TurfWallet] Earn failed for booking ${bookingId}:`, err));
-  }
-
-  // ── Private: Refund Processing ─────────────────────────────────────────────
-
-  private async _processRefund(bookingId: number, amount: number, reason: string | null) {
-    const settlementItem = await turfSettlementRepository.findItemByBooking(bookingId);
-    let netRefund = amount;
-    if (settlementItem) {
-      const commissionProportion = parseFloat(settlementItem.commission_amount) / parseFloat(settlementItem.gross_amount);
-      const commissionDeduction = Math.round(amount * commissionProportion * 100) / 100;
-      netRefund = Math.round((amount - commissionDeduction) * 100) / 100;
-    }
-    await turfRefundRepository.create({
-      settlement_item_id: settlementItem?.id ?? null,
-      booking_id: bookingId,
-      amount: netRefund,
-      reason: reason ?? 'Booking cancelled',
-    });
-    logger.info(`[TurfBooking] Refund processed: booking ${bookingId}, amount ${netRefund}`);
   }
 }
 

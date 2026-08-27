@@ -285,18 +285,20 @@ export class AuthService {
     return { tokens, user, isNewUser: true };
   }
 
-  /** Legacy: simple register, backward compatible */
-  async register(email: string, password: string): Promise<{ token: string; user: { id: number; email: string } }> {
-    const normalizedEmail = email.toLowerCase().trim();
-    const existing = await userRepository.findByEmail(normalizedEmail);
-    if (existing) {
-      throw new AppError('Email already registered', 409);
-    }
-
-    const userId = await userRepository.create(normalizedEmail, password);
-    const token = generateAccessToken(userId, normalizedEmail);
-
-    return { token, user: { id: userId, email: normalizedEmail } };
+  /** Legacy: simple register, backward compatible
+   *  Delegates to the OTP registration flow. Creates a pending registration
+   *  and sends a verification OTP. The account is only created after the
+   *  user verifies the OTP — no unverified account with API access is ever
+   *  created. Returns the same interface shape so existing callers do not
+   *  break, but token will be empty until OTP verification completes.
+   */
+  async register(email: string, password: string): Promise<{ token: string; user: { id: number; email: string }; message: string }> {
+    const result = await this.requestRegistrationOtp(email, null, password);
+    return {
+      token: '',
+      user: { id: 0, email: email.toLowerCase().trim() },
+      message: result.message,
+    } as unknown as { token: string; user: { id: number; email: string }; message: string };
   }
 
   // ── OTP Registration (preferred new flow) ─────────────────────────────────

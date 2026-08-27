@@ -1,5 +1,13 @@
 /**
- * Payment order repository — Cashfree payment orders.
+ * Payment order repository — provider-agnostic payment orders.
+ *
+ * Column naming convention:
+ *   provider_payment_id       → gateway-specific payment identifier
+ *   provider_order_token       → gateway-specific order token
+ *   provider_session_id        → gateway-specific payment session ID
+ *   provider_authorization_id  → gateway-specific authorization ID
+ *
+ * Column names are provider-agnostic (cf_payment_id, etc.).
  */
 
 import { getPool } from '../db/pool';
@@ -14,21 +22,20 @@ import type {
 export class PaymentOrderRepository {
   async create(input: PaymentOrderCreateInput): Promise<PaymentOrderRow> {
     const { rows } = await getPool().query(
-      `INSERT INTO payment_orders (order_id, booking_id, organization_id, event_id, booking_type, amount, currency, idempotency_key, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'CREATED')
+      `INSERT INTO payment_orders (order_id, booking_id, organization_id, event_id, booking_type, amount, currency, idempotency_key, status, payment_gateway, financial_snapshot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'CREATED',$9,$10)
        RETURNING *`,
       [
         input.order_id,
         input.booking_id,
         input.organization_id,
-        // For movie bookings, event_id must be NULL — movie_id is NOT stored
-        // in the event_id column (see migration 034). Store NULL to keep
-        // revenue reporting accurate.
         input.event_id ?? null,
         input.event_id != null ? 'event' : input.movie_id != null ? 'movie' : 'turf',
         input.amount,
         input.currency || 'INR',
         input.idempotency_key || null,
+        input.payment_gateway || 'federal_bank',
+        input.financial_snapshot ? JSON.stringify(input.financial_snapshot) : null,
       ]
     );
     return rows[0] as unknown as PaymentOrderRow;
@@ -84,7 +91,7 @@ export class PaymentOrderRepository {
       }
     }
     const { rows } = await pool.query(
-      `UPDATE payment_orders SET ${sets.join(', ')} WHERE id = ${idx} RETURNING *`,
+      `UPDATE payment_orders SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
       [...params, id]
     );
     return (rows as unknown as PaymentOrderRow[])[0] || null;
@@ -93,12 +100,12 @@ export class PaymentOrderRepository {
   async updateFromWebhook(orderId: string, data: Record<string, unknown>, client?: PoolClient): Promise<PaymentOrderRow | null> {
     const pool = client ?? getPool();
     const { rows } = await pool.query(
-      `UPDATE payment_orders SET status = COALESCE($1, status), cf_payment_id = COALESCE($2, cf_payment_id),
-              cf_authorization_id = COALESCE($3, cf_authorization_id), payment_method = COALESCE($4, payment_method),
+      `UPDATE payment_orders SET status = COALESCE($1, status), provider_payment_id = COALESCE($2, provider_payment_id),
+              provider_authorization_id = COALESCE($3, provider_authorization_id), payment_method = COALESCE($4, payment_method),
               error_code = COALESCE($5, error_code), error_message = COALESCE($6, error_message),
               verified_at = NOW(), verified_by = 'webhook', retry_count = retry_count + 1, updated_at = NOW()
        WHERE order_id = $7 RETURNING *`,
-      [data.status, data.cf_payment_id, data.cf_authorization_id, data.payment_method, data.error_code, data.error_message, orderId]
+      [data.status, data.provider_payment_id, data.provider_authorization_id, data.payment_method, data.error_code, data.error_message, orderId]
     );
     return (rows as unknown as PaymentOrderRow[])[0] || null;
   }
@@ -134,7 +141,7 @@ export class PaymentOrderRepository {
     let idx = 4;
     if (eventId) { where.push(`po.event_id = $${idx++}`); params.push(eventId); }
     const { rows } = await getPool().query(
-      `SELECT tt.id as tier_id, tt.name as tier_name, SUM(tt.sold_quantity * tt.price) as revenue, SUM(tt.sold_quantity) as tickets_sold
+      `SELECT po.event_id, tt.id as tier_id, tt.name as tier_name, SUM(tt.sold_quantity * tt.price) as revenue, SUM(tt.sold_quantity) as tickets_sold
        FROM payment_orders po
        JOIN ticket_tiers tt ON tt.event_id = po.event_id
        WHERE ${where.join(' AND ')}

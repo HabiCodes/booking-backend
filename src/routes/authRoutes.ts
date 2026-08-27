@@ -26,7 +26,7 @@ const router = Router();
 
 // ── Legacy endpoints (kept for backward compat) ──────────────────────────────
 router.post('/register', register);
-router.post('/login', login);
+router.post('/login', authRateLimiter, login);
 
 // ── Enhanced endpoints ──────────────────────────────────────────────────────
 router.post('/register-enhanced', authRateLimiter, registerEnhanced);

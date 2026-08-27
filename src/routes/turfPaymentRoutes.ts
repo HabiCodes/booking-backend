@@ -1,5 +1,5 @@
 /**
- * Turf payment routes — uses main backend's Cashfree infrastructure.
+ * Turf payment routes — uses universal payment infrastructure.
  * Mounted at /api/v1/turf/payments
  */
 
@@ -8,11 +8,13 @@ import { authMiddleware } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { turfBookingRepository } from '../repositories/turfBookingRepository';
 import { PaymentService, createPaymentService } from '../services/paymentService';
+import { FederalBankPaymentProvider } from '../services/federalBankProvider';
 import { turfBookingService } from '../services/turfBookingService';
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
 import { webhookEventRepository } from '../repositories/webhookEventRepository';
 import { logger } from '../utils/logger';
 import { config } from '../config';
+import type { FinancialSnapshot } from '../services/pricingEngine';
 
 const router = Router();
 
@@ -20,20 +22,15 @@ const router = Router();
 let paymentService: PaymentService | null = null;
 function getPaymentService(): PaymentService {
   if (!paymentService) {
-    paymentService = createPaymentService({
-      appId: config.cashfree.appId,
-      secretKey: config.cashfree.secretKey,
-      webhookSecret: config.cashfree.webhookSecret,
-      returnUrl: config.cashfree.returnUrl,
-      notifyUrl: config.cashfree.notifyUrl,
-    });
+    const provider = new FederalBankPaymentProvider(config.paymentProvider);
+    paymentService = createPaymentService(provider);
   }
   return paymentService;
 }
 
 /**
  * POST /api/v1/turf/payments/create-order
- * Creates a Cashfree payment order for a Turf booking.
+ * Creates a payment order for a Turf booking.
  */
 router.post('/create-order', authMiddleware, async (req, res, next) => {
   try {
@@ -56,8 +53,16 @@ router.post('/create-order', authMiddleware, async (req, res, next) => {
     );
     const user = userResult.rows[0];
 
-    // Create payment order via main Cashfree service
+    // Create payment order via universal payment service
     const orderId = `turf_${booking.booking_reference}`;
+
+    // Extract financial snapshot from booking metadata (set during booking creation)
+    let financialSnapshot: FinancialSnapshot | null = null;
+    try {
+      const meta = typeof booking.metadata === 'string' ? JSON.parse(booking.metadata) : booking.metadata;
+      financialSnapshot = meta?.pricingSnapshot || null;
+    } catch { /* metadata not JSON */ }
+
     const result = await getPaymentService().createOrder({
       booking_id: booking.id,
       order_id: orderId,
@@ -70,6 +75,7 @@ router.post('/create-order', authMiddleware, async (req, res, next) => {
       customerEmail: user?.email || '',
       customerPhone: user?.phone || '',
       customerName: user?.username || user?.email || `User ${userId}`,
+      financial_snapshot: financialSnapshot as unknown as Record<string, unknown> | null,
       metadata: { source: 'turf' },
     });
 
@@ -99,7 +105,7 @@ router.post('/verify', authMiddleware, async (req, res, next) => {
       throw new AppError('Booking is not in pending_payment state', 409);
     }
 
-    // Verify with Cashfree and persist result to DB
+    // Verify with payment provider and persist result to DB
     const order = await getPaymentService().verifyPayment(gatewayOrderId);
 
     if (order.status === 'COMPLETED') {

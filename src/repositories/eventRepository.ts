@@ -6,7 +6,7 @@
  *   country, latitude, longitude, start_at, end_at, event_date, start_time,
  *   end_time, capacity, remaining_capacity, price, currency, banner_url,
  *   thumbnail_url, logo_url, gallery JSONB, status, visibility, is_featured,
- *   is_active, organizer, created_at, updated_at, published_at, deleted_at, organization_id, organizer_status
+ *   is_active, is_free, organizer, created_at, updated_at, published_at, deleted_at, organization_id, organizer_status
  */
 
 import { getPool, withTransaction } from '../db/pool';
@@ -29,7 +29,7 @@ const PUBLIC_EVENT_COLUMNS = `
   start_at, end_at, event_date, start_time, end_time,
   capacity, remaining_capacity, price, currency,
   banner_url, thumbnail_url, logo_url, gallery,
-  status, visibility, is_featured, is_active, organizer,
+  status, visibility, is_featured, is_active, is_free, organizer,
   cancel_window_hours, cancellable_until,
   submitted_for_review_at, approved_at, approved_by, archived_at,
   created_at, updated_at, published_at, deleted_at, organization_id, organizer_status
@@ -56,6 +56,21 @@ export class EventRepository {
       [id]
     );
     return (rows as unknown as EventRow[])[0] || null;
+  }
+
+  /**
+   * Lightweight lookup: get event_id and organization_id for a booking.
+   * Used by settlement services to resolve org context from a booking_id.
+   */
+  async getBookingEvent(bookingId: number): Promise<{ event_id: number; organization_id: number | null } | null> {
+    const { rows } = await getPool().query(
+      `SELECT b.event_id, e.organization_id
+       FROM bookings b
+       JOIN events e ON e.id = b.event_id
+       WHERE b.id = $1 AND b.deleted_at IS NULL LIMIT 1`,
+      [bookingId]
+    );
+    return (rows as Array<{ event_id: number; organization_id: number | null }>)[0] || null;
   }
 
   async listPublicEvents(query: EventListQuery): Promise<EventListResult> {
@@ -336,9 +351,9 @@ export class EventRepository {
          start_at, end_at, event_date, start_time, end_time,
          capacity, remaining_capacity, price, currency,
          banner_url, thumbnail_url, logo_url, gallery,
-         status, visibility, is_featured, is_active, organizer,
+         status, visibility, is_featured, is_active, is_free, organizer,
          cancel_window_hours, cancellable_until
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
        RETURNING id`,
       [
         input.title,
@@ -369,6 +384,7 @@ export class EventRepository {
         input.visibility ?? 'public',
         input.is_featured ?? false,
         true,
+        input.is_free ?? false,
         (input as any).organizer ?? null,
         input.cancel_window_hours ?? 6,
         input.start_at && (input.cancel_window_hours ?? 6) !== undefined
@@ -421,6 +437,7 @@ export class EventRepository {
     setField('visibility', input.visibility);
     setField('is_featured', input.is_featured);
     setField('is_active', input.is_active);
+    setField('is_free', input.is_free);
     setField('cancel_window_hours', input.cancel_window_hours);
 
     // Recompute cancellable_until when start_at or cancel_window_hours changes
@@ -552,7 +569,7 @@ export class EventRepository {
 
   async getBookedCount(eventId: number): Promise<number> {
     const { rows } = await getPool().query(
-      `SELECT COALESCE(SUM(ticket_count), 0) AS total FROM bookings WHERE event_id = $1`,
+      `SELECT COALESCE(SUM(ticket_count), 0) AS total FROM bookings WHERE event_id = $1 AND deleted_at IS NULL AND status IN ('pending', 'confirmed', 'attended', 'payment_pending')`,
       [eventId]
     );
     const row = rows as Array<{ total: number | string }>;

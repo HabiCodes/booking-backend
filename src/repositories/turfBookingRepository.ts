@@ -12,7 +12,7 @@ export class TurfBookingRepository {
   }
 
   async findByReference(ref: string): Promise<TurfBookingRow | null> {
-    const { rows } = await getPool().query('SELECT * FROM turf_bookings WHERE booking_reference = $1 LIMIT 1', [ref]);
+    const { rows } = await getPool().query('SELECT * FROM turf_bookings WHERE booking_reference = $1 AND deleted_at IS NULL LIMIT 1', [ref]);
     return (rows as unknown as TurfBookingRow[])[0] || null;
   }
 

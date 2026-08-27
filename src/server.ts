@@ -38,6 +38,7 @@ import { unifiedWebhookRoutes } from './routes/unifiedWebhookRoutes';
 import { turfManagerRoutes } from './routes/turfManagerRoutes';
 import { runTurfWorkers } from './workers/turfWorkers';
 import { runMovieWorkers } from './workers/movieWorkers';
+import { runEventWorkers } from './workers/eventWorkers';
 import { tryAcquireWorkerLock, releaseWorkerLock } from './infrastructure/workerLock';
 import { tryAcquireSchedulerLock, releaseSchedulerLock } from './infrastructure/schedulerLock';
 import { authRateLimiter, apiRateLimiter, createDistributedRateLimiter } from './infrastructure/distributedRateLimiter';
@@ -45,6 +46,7 @@ import { createRedisIoAdapter } from './infrastructure/redisSocketAdapter';
 import { startAvailabilitySchedulerWithLock } from './services/turfAvailabilityScheduler';
 import { movieRoutes } from './routes/movies';
 import { movieScanRoutes } from './routes/movieScanRoutes';
+import { turfScanRoutes } from './routes/turfScanRoutes';
 import { adminMovieRouter } from './routes/movieAdmin';
 import { layoutVersionRoutes } from './routes/layoutVersionRoutes';
 import { organizerMovieRouter } from './routes/movieManagerRoutes';
@@ -157,6 +159,7 @@ apiV1.use('/owner', ownerDashboardRoutes);
 apiV1.use('/owner', ownerManagerRoutes);
 apiV1.use('/scan', scanRoutes);
 apiV1.use('/scan/movies', movieScanRoutes);
+apiV1.use('/scan/turf', turfScanRoutes);
 apiV1.use('/admin', adminRoutes);
 apiV1.use('/admin', adminProtectedRoutes);
 apiV1.use('/promotions', promotionPublicRoutes);
@@ -175,31 +178,17 @@ apiV1.use('/organizer/movies', organizerMovieRouter);
 
 app.use('/api/v1', apiV1);
 
-// ── Legacy /api routes (backward compatibility) ───────────────────────────────
-
-app.use('/api/auth', authRateLimiter, authRoutes);
-app.use('/api/events', eventRoutes);
-app.use('/api/bookings', bookingRoutes);
-app.use('/api/turf/admin', turfAdminRoutes);
-app.use('/api/turf/organizer', turfOrganizerRoutes);
-app.use('/api/turf/manager', turfManagerRoutes);
-app.use('/api/turf/payments', turfPaymentRoutes);
-app.use('/api/webhooks', unifiedWebhookRoutes);
-app.use('/api/turf', turfCustomerRoutes);
-app.use('/api/owner', ownerDashboardRoutes);
-app.use('/api/owner', ownerManagerRoutes);
-app.use('/api/scan', scanRoutes);
-app.use('/api/scan/movies', movieScanRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/admin', adminProtectedRoutes);
-app.use('/api/organizer/auth', organizerAuthRoutes);
-app.use('/api/organizer/events', organizerEventRoutes);
-app.use('/api/organizer/organizations', organizerOrganizationRoutes);
-app.use('/api/organizer/applications', organizerApplicationRoutes);
-app.use('/api/movies', movieRoutes);
-app.use('/api/admin/movies', adminMovieRouter);
-app.use('/api/admin/layout-versions', layoutVersionRoutes);
-app.use('/api/organizer/movies', organizerMovieRouter);
+// Legacy /api routes removed — use /api/v1 exclusively.
+// Kept as a redirect for backward compatibility during migration.
+app.use('/api', (req, res) => {
+  res.setHeader('Deprecation', 'true');
+  res.setHeader('Link', '</api/v1' + req.url + '>; rel="successor-version"');
+  res.status(301).json({
+    success: false,
+    message: 'This endpoint has moved to /api/v1' + req.url,
+    newUrl: '/api/v1' + req.url,
+  });
+});
 
 // ── API documentation ────────────────────────────────────────────────────────
 
@@ -293,6 +282,18 @@ async function start() {
             await releaseWorkerLock('movie-workers-boot');
           }
         }
+
+        const eventBootLock = await tryAcquireWorkerLock('event-workers-boot', 600_000);
+        if (eventBootLock) {
+          try {
+            await runEventWorkers('all');
+            logger.info('Background workers completed initial event sweep');
+          } catch (err) {
+            logger.warn('Initial event worker sweep failed (non-fatal):', err as Error);
+          } finally {
+            await releaseWorkerLock('event-workers-boot');
+          }
+        }
       } catch (err) {
         logger.warn('Initial worker sweep setup failed (non-fatal):', err as Error);
       }
@@ -322,6 +323,17 @@ async function start() {
             logger.error('Movie worker error:', err as Error);
           } finally {
             await releaseWorkerLock('movie-workers');
+          }
+        }
+
+        const eventLocked = await tryAcquireWorkerLock('event-workers', WORKER_LOCK_TTL_MS);
+        if (eventLocked) {
+          try {
+            await runEventWorkers('expire-pending-payments');
+          } catch (err) {
+            logger.error('Event worker error:', err as Error);
+          } finally {
+            await releaseWorkerLock('event-workers');
           }
         }
       }

@@ -1,11 +1,11 @@
 /**
  * Turf Manager Routes — offline booking, QR validation, attendance, reports.
  *
- * Uses the main backend's auth middleware (user JWT) + organization scoping.
+ * Uses the organizer auth middleware (organizer JWT) + organization scoping.
  */
 
 import { Router } from 'express';
-import { authMiddleware } from '../middleware/auth';
+import { organizerAuthMiddleware } from '../middleware/organizerAuth';
 import { AppError } from '../middleware/errorHandler';
 import { turfBookingService } from '../services/turfBookingService';
 import { turfBookingRepository } from '../repositories/turfBookingRepository';
@@ -13,20 +13,21 @@ import { turfAvailabilityRepository } from '../repositories/turfAvailabilityRepo
 import { turfQRRepository } from '../repositories/turfQRRepository';
 import { turfResourceRepository } from '../repositories/turfResourceRepository';
 import { turfVenueRepository } from '../repositories/turfVenueRepository';
+import { UniversalTicketService } from '../services/universalTicketService';
 import { logger } from '../utils/logger';
 import { getPool } from '../db/pool';
 
 const router = Router();
 
-// All manager routes require authentication
-router.use(authMiddleware);
+// All manager routes require organizer authentication
+router.use(organizerAuthMiddleware);
 
 // ── Offline Booking (Walk-in) ────────────────────────────────────────────────
 
 router.post('/organizations/:organizationId/offline-booking',
   async (req, res, next) => {
     try {
-      const userId = (req as any).user?.id;
+      const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
 
       const orgId = Number(req.params.organizationId);
@@ -99,7 +100,7 @@ router.post('/organizations/:organizationId/offline-booking',
 router.post('/organizations/:organizationId/validate-qr',
   async (req: any, res: any, next: any) => {
     try {
-      const userId = req.user?.id;
+      const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
 
       const orgId = Number(req.params.organizationId);
@@ -126,6 +127,28 @@ router.post('/organizations/:organizationId/validate-qr',
 
       if (booking.organization_id !== orgId) {
         return res.status(403).json({ success: true, data: { valid: false, reason: 'This booking does not belong to your organization' } });
+      }
+
+      // Verify HMAC signature on the QR ticket
+      let qrDataPayload: { ticket?: string; slot?: string; venue?: number } | null = null;
+      if (qr.qr_data) {
+        try { qrDataPayload = JSON.parse(qr.qr_data); } catch { /* ignore parse errors */ }
+      }
+      const signature = qr.metadata && typeof qr.metadata === 'object' ? (qr.metadata as any).signature || null : null;
+      const ticketUuid = qrDataPayload?.ticket || token;
+      const slotStart = qrDataPayload?.slot || '';
+      const sigResult = UniversalTicketService.verify({
+        domain: 'turf',
+        ticketUuid,
+        entityId: booking.venue_id,
+        startAt: slotStart,
+        signature,
+      });
+      if (!sigResult.valid) {
+        return res.status(400).json({
+          success: true,
+          data: { valid: false, reason: sigResult.reason || 'Invalid QR signature — ticket may be forged' },
+        });
       }
 
       // Try check-in (validates all conditions internally)
@@ -169,7 +192,7 @@ router.post('/organizations/:organizationId/validate-qr',
 router.post('/organizations/:organizationId/bookings/:bookingId/cancel',
   async (req, res, next) => {
     try {
-      const userId = (req as any).user?.id;
+      const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
 
       const orgId = Number(req.params.organizationId);
@@ -202,7 +225,7 @@ router.post('/organizations/:organizationId/bookings/:bookingId/cancel',
 router.get('/organizations/:organizationId/attendance',
   async (req, res, next) => {
     try {
-      const userId = (req as any).user?.id;
+      const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
 
       const orgId = Number(req.params.organizationId);
@@ -255,7 +278,7 @@ router.get('/organizations/:organizationId/attendance',
 router.get('/organizations/:organizationId/daily-report',
   async (req, res, next) => {
     try {
-      const userId = (req as any).user?.id;
+      const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
 
       const orgId = Number(req.params.organizationId);
@@ -307,7 +330,7 @@ router.get('/organizations/:organizationId/daily-report',
 router.get('/organizations/:organizationId/entry-logs',
   async (req, res, next) => {
     try {
-      const userId = (req as any).user?.id;
+      const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
 
       const orgId = Number(req.params.organizationId);

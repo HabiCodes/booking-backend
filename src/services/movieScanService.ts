@@ -8,7 +8,6 @@
 import { getPool } from '../db/pool';
 import { AppError } from '../middleware/errorHandler';
 import { verifyTicketSignature } from '../utils/qrCode';
-import { config } from '../config';
 
 export type MovieScanStatus = 'VALID' | 'ALREADY_SCANNED' | 'INVALID' | 'EXPIRED';
 
@@ -44,6 +43,7 @@ interface MovieTicketRow {
   show_datetime: string;
   end_datetime: string | null;
   deleted_at: string | null;
+  booking_organization_id: number;
 }
 
 async function getMovieTicketWithDetails(uuid: string): Promise<MovieTicketRow | null> {
@@ -52,7 +52,7 @@ async function getMovieTicketWithDetails(uuid: string): Promise<MovieTicketRow |
        mt.ticket_uuid, mt.status, mt.used_at, mt.revoked_at,
        mt.signature, mt.seat_label, mt.row_label, mt.showtime_id,
        m.title AS movie_title, c.name AS cinema_name, cs.screen_number,
-       st.show_datetime, st.end_datetime
+       st.show_datetime, st.end_datetime, mb.organization_id AS booking_organization_id
      FROM movie_tickets mt
      JOIN movie_bookings mb ON mb.id = mt.booking_id
      JOIN movies m ON m.id = mb.movie_id
@@ -67,7 +67,17 @@ async function getMovieTicketWithDetails(uuid: string): Promise<MovieTicketRow |
 }
 
 export class MovieScanService {
-  async verify(uuid: string): Promise<MovieScanResult> {
+  /**
+   * Verify a movie ticket's current status:
+   *  - EXPIRED: showtime has ended
+   *  - INVALID: ticket doesn't exist, soft-deleted, revoked, or org-scoped unauthorized
+   *  - ALREADY_SCANNED: already checked in
+   *  - VALID: everything checks out
+   *
+   * @param uuid - Ticket UUID to verify
+   * @param adminOrganizationId - null for super-admin (all orgs), non-null restricts to that org
+   */
+  async verify(uuid: string, adminOrganizationId?: number | null): Promise<MovieScanResult> {
     if (!uuid || typeof uuid !== 'string') {
       throw new AppError('Invalid ticket UUID', 400);
     }
@@ -75,6 +85,16 @@ export class MovieScanService {
     const ticket = await getMovieTicketWithDetails(uuid);
     if (!ticket) {
       return { status: 'INVALID', message: 'Ticket does not exist' };
+    }
+
+    // Organization scoping: restrict admins to their own org's bookings
+    if (adminOrganizationId !== undefined && adminOrganizationId !== null
+        && ticket.booking_organization_id !== adminOrganizationId) {
+      return {
+        status: 'INVALID',
+        ticket: this._toTicketInfo(ticket, false),
+        message: 'Not authorized for this booking',
+      };
     }
 
     // Revoked tickets are immediately invalid
@@ -121,7 +141,13 @@ export class MovieScanService {
     };
   }
 
-  async markCheckedIn(uuid: string, adminId: number): Promise<MovieScanResult> {
+  /**
+   * Mark a movie ticket as checked in. Returns the scan result.
+   *
+   * @param uuid - Ticket UUID to check in
+   * @param adminOrganizationId - null for super-admin (all orgs), non-null restricts to that org
+   */
+  async markCheckedIn(uuid: string, adminId: number, adminOrganizationId?: number | null): Promise<MovieScanResult> {
     if (!uuid || typeof uuid !== 'string') {
       throw new AppError('Invalid ticket UUID', 400);
     }
@@ -130,6 +156,18 @@ export class MovieScanService {
     if (!ticket) {
       return { status: 'INVALID', message: 'Ticket does not exist' };
     }
+
+    // Organization scoping
+    if (adminOrganizationId !== undefined && adminOrganizationId !== null
+        && ticket.booking_organization_id !== adminOrganizationId) {
+      return {
+        status: 'INVALID',
+        ticket: this._toTicketInfo(ticket, false),
+        message: 'Not authorized for this booking',
+      };
+    }
+
+    const refreshedRow = ticket;
 
     if (ticket.revoked_at) {
       return {
@@ -152,6 +190,21 @@ export class MovieScanService {
         status: 'ALREADY_SCANNED',
         ticket: this._toTicketInfo(ticket, true),
         message: 'Ticket was already scanned',
+      };
+    }
+
+    // Verify HMAC signature before marking checked in
+    const sigResult = verifyTicketSignature(
+      { ticket_uuid: ticket.ticket_uuid },
+      ticket.showtime_id,
+      '',
+      ticket.signature
+    );
+    if (!sigResult.valid) {
+      return {
+        status: 'INVALID',
+        ticket: this._toTicketInfo(ticket, false),
+        message: sigResult.reason ?? 'Invalid signature — cannot check in',
       };
     }
 

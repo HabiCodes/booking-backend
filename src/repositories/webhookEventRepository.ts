@@ -1,5 +1,5 @@
 /**
- * Webhook event repository — idempotent Cashfree webhook processing.
+ * Webhook event repository — idempotent payment webhook processing.
  */
 
 import { getPool } from '../db/pool';

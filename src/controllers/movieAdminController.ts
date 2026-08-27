@@ -289,7 +289,7 @@ export async function getShowtimeSummary(req: AdminRequest, res: Response, next:
 
 export async function listPriceCaps(req: AdminRequest, res: Response, next: NextFunction) {
   try {
-    const organizationId = req.admin?.id ?? 0;
+    const organizationId = req.admin?.organizationId ?? 0;
     const page = req.query.page ? Number(req.query.page) : 1;
     const pageSize = Math.min(req.query.pageSize ? Number(req.query.pageSize) : 25, 100);
     const result = await moviePriceCapService.findByOrganization(organizationId, { page, pageSize });

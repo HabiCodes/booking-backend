@@ -29,7 +29,9 @@ import { moviePriceCapRepository } from '../repositories/moviePriceCapRepository
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
 import { financialConfigService } from '../services/financialConfigService';
 import { calculateBookingFinancials } from '../services/financialCalculator';
-import { signTicket } from '../utils/qrCode';
+import { PricingEngine } from '../services/pricingEngine';
+import { movieSettlementRepository } from '../repositories/movieSettlementRepository';
+import { UniversalTicketService } from '../services/universalTicketService';
 import type {
   MovieBookingRow,
   MovieBookingWithDetails,
@@ -201,7 +203,43 @@ export class MovieOfflineBookingService {
     }
 
     const prices = await this._calculateSeatPrices(showtime, seats, cinema);
-    const totalAmount = prices.reduce((sum, p) => sum + p.finalPricePaise, 0);
+
+    // Offline (manager/counter) booking: GST 18% + 2% platform fee on base
+    const pricingEngine = new PricingEngine();
+    let totalAmountPaise = 0;
+    let aggregatePlatformFeePaise = 0;
+    let aggregateGstTotalPaise = 0;
+    const seatPricingResults: Array<{ seatId: number; totalPaise: number; basePaise: number }> = [];
+    for (const seatPrice of prices) {
+      const breakdown = pricingEngine.calculate({
+        domain: 'movie_manager',
+        unitPricePaise: seatPrice.finalPricePaise,
+        quantity: 1,
+        currency: 'INR',
+      });
+      totalAmountPaise += breakdown.totalPaise;
+      aggregatePlatformFeePaise += breakdown.platformFeePaise;
+      aggregateGstTotalPaise += breakdown.gstTotalPaise;
+      seatPricingResults.push({ seatId: seatPrice.seatId, totalPaise: breakdown.totalPaise, basePaise: seatPrice.finalPricePaise });
+    }
+    const totalAmount = totalAmountPaise;
+
+    const baseSubtotalPaise = seatPricingResults.reduce((sum, p) => sum + p.basePaise, 0);
+
+    // Build a proper pricing snapshot for the payment order (audit trail)
+    // Use values aggregated from per-seat PricingEngine breakdowns
+    const pricingSnapshot: Record<string, unknown> = {
+      domain: 'movie_manager',
+      bookingChannel: 'offline',
+      subtotalPaise: baseSubtotalPaise,
+      platformFeePaise: aggregatePlatformFeePaise,
+      gstTotalPaise: aggregateGstTotalPaise,
+      totalPaise: totalAmountPaise,
+      currency: 'INR',
+      seatCount: seatIds.length,
+      seatPrices: seatPricingResults,
+      calculatedAt: new Date().toISOString(),
+    };
 
     // ── Atomic booking creation (no payment gateway) ──────────────────────────
 
@@ -235,7 +273,7 @@ export class MovieOfflineBookingService {
           input.customerEmail || null, input.customerPhone || null, input.customerName.trim(),
           'confirmed', 'paid_offline', idempotencyKey,
           JSON.stringify({
-            prices: prices.map(p => ({ seatId: p.seatId, price: p.finalPricePaise, seatType: p.seatType })),
+            prices: seatPricingResults.map((p, i) => ({ seatId: p.seatId, basePaise: p.basePaise, totalPaise: p.totalPaise, seatType: prices[i]?.seatType })),
             paymentMethod: input.paymentMethod,
             paymentReference: input.paymentReference || null,
             notes: input.notes || null,
@@ -286,13 +324,14 @@ export class MovieOfflineBookingService {
       currency: 'INR',
       idempotency_key: `movie_offline_pay_${booking.id}`,
       payment_method: input.paymentMethod,
+      financial_snapshot: pricingSnapshot,
     });
 
     // Update payment_order to mark as COMPLETED with manual gateway
     await paymentOrderRepository.updateFromWebhook(orderId, {
       status: 'COMPLETED',
       payment_method: input.paymentMethod,
-      cf_payment_id: input.paymentReference || `manual_${input.paymentMethod.toLowerCase()}`,
+      provider_payment_id: input.paymentReference || `manual_${input.paymentMethod.toLowerCase()}`,
     });
 
     // ── Generate tickets ──────────────────────────────────────────────────────
@@ -308,8 +347,13 @@ export class MovieOfflineBookingService {
     }> = [];
 
     for (const item of bookingItems) {
-      const ticketUuid = crypto.randomBytes(16).toString('hex');
-      const signature = signTicket({ ticket_uuid: ticketUuid }, booking.showtime_id, '');
+      const ticketUuid = UniversalTicketService.generateTicketUuid('movie_manager');
+      const signature = UniversalTicketService.sign({
+        domain: 'movie_manager',
+        ticketUuid,
+        entityId: booking.showtime_id,
+        startAt: '',
+      });
 
       const qrData = JSON.stringify({
         ref: booking.booking_reference,
@@ -317,6 +361,7 @@ export class MovieOfflineBookingService {
         seat: item.seat_label,
         row: item.row_label,
         showtime: booking.showtime_id,
+        domain: 'movie_manager',
         bookingType: 'offline',
       });
 
@@ -346,7 +391,7 @@ export class MovieOfflineBookingService {
 
     // ── Settlement ────────────────────────────────────────────────────────────
 
-    await this._createSettlement(booking, totalAmount);
+    await this._createSettlement(booking, baseSubtotalPaise);
 
     await audit(booking.id, 'offline_booking.created', {
       actorType: 'staff', actorId: staffUserId,
@@ -425,16 +470,15 @@ export class MovieOfflineBookingService {
       config: configSnapshot,
     });
 
-    const { turfSettlementRepository } = await import('../repositories/turfSettlementRepository');
-    const existing = await turfSettlementRepository.findItemByBooking(booking.id);
+    const existing = await movieSettlementRepository.findItemByBooking(booking.id);
     if (existing) return;
 
-    const pendingList = await turfSettlementRepository.findPendingByOrg(orgId);
+    const pendingList = await movieSettlementRepository.findPendingByOrg(orgId);
     let settlement = pendingList[0];
     if (!settlement) {
-      settlement = await turfSettlementRepository.create({ organization_id: orgId });
+      settlement = await movieSettlementRepository.create({ organization_id: orgId });
     }
-    await turfSettlementRepository.addItem({
+    await movieSettlementRepository.addItem({
       settlement_id: settlement.id,
       booking_id: booking.id,
       gross_amount: grossAmount / 100,

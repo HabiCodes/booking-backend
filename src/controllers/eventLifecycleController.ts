@@ -19,11 +19,12 @@ import { Request, Response, NextFunction } from 'express';
 import { AdminRequest } from '../middleware/adminAuth';
 import { eventLifecycleService } from '../services/eventLifecycleService';
 import { eventRepository } from '../repositories/eventRepository';
+import { AppError } from '../middleware/errorHandler';
 
 function eventIdParam(req: Request): number {
   const id = parseInt(req.params.id, 10);
   if (!Number.isFinite(id)) {
-    throw { statusCode: 400, message: 'Invalid event ID' } as Error & { statusCode?: number };
+    throw new AppError('Invalid event ID', 400);
   }
   return id;
 }
@@ -67,7 +68,7 @@ export async function rejectEvent(req: AdminRequest, res: Response, next: NextFu
     const eventId = eventIdParam(req);
     const body = (req.body ?? {}) as { reason?: string };
     if (!body.reason?.trim()) {
-      throw { statusCode: 400, message: 'rejection reason is required' } as Error & { statusCode?: number };
+      throw new AppError('rejection reason is required', 400);
     }
     const { event } = await eventLifecycleService.rejectEvent(eventId, actor(req), body.reason);
     res.json({ success: true, data: event });

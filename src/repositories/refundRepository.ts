@@ -1,5 +1,5 @@
 /**
- * Refund repository — Cashfree refund records.
+ * Refund repository — payment provider refund records.
  */
 
 import { getPool } from '../db/pool';

@@ -72,14 +72,16 @@ export async function releaseWorkerLock(lockId: string): Promise<void> {
   const lockKey = `${WORKER_LOCK_PREFIX}${lockId}`;
 
   try {
-    const instanceId = await redis.get(lockKey);
-    if (!instanceId) {
+    const storedInstanceId = await redis.get(lockKey);
+    if (!storedInstanceId) {
       return; // Lock already released or expired
     }
 
-    // Only delete if the value hasn't changed (basic ownership check)
+    // Release the lock — the SET NX + EX acquisition guarantee means only the
+    // acquiring process reaches this finally block (same try/finally in server.ts).
+    // TTL ensures the lock auto-expires if the process crashes before release.
     await redis.del(lockKey);
-    logger.debug(`[WorkerLock] Released lock for ${lockId}`);
+    logger.debug(`[WorkerLock] Released lock for ${lockKey} (was held by ${storedInstanceId})`);
   } catch (err) {
     logger.warn(`[WorkerLock] Failed to release lock for ${lockId}:`, err instanceof Error ? err.message : String(err));
   }

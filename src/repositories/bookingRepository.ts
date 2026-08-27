@@ -13,14 +13,52 @@ export class BookingRepository {
     exec: QueryExecutor,
     userId: number,
     eventId: number,
-    ticketCount: number
+    ticketCount: number,
+    status: BookingRow['status'] = 'pending'
   ): Promise<number> {
     const { rows } = await exec.query(
-      'INSERT INTO bookings (user_id, event_id, ticket_count) VALUES ($1, $2, $3) RETURNING id',
-      [userId, eventId, ticketCount]
+      `INSERT INTO bookings (user_id, event_id, ticket_count, status)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [userId, eventId, ticketCount, status]
     );
     const row = rows as Array<{ id: number }>;
     return row[0]?.id ?? 0;
+  }
+
+  async createTicketsWithUuids(
+    exec: QueryExecutor,
+    bookingId: number,
+    attendees: CreateBookingInput['attendees'],
+    ticketUuids: string[]
+  ): Promise<TicketRow[]> {
+    if (attendees.length === 0) return [];
+
+    const inserted: TicketRow[] = [];
+
+    for (let i = 0; i < attendees.length; i++) {
+      const att = attendees[i];
+      const ticketUuid = ticketUuids[i];
+      const { rows } = await exec.query(
+        `INSERT INTO tickets
+           (booking_id, ticket_uuid, attendee_name, attendee_phone, attendee_age, attendee_gender, issued_at, status)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+         RETURNING *`,
+        [
+          bookingId,
+          ticketUuid,
+          att.full_name.trim(),
+          att.phone.trim(),
+          att.age !== undefined && att.age !== null && att.age !== ''
+            ? parseInt(String(att.age), 10)
+            : null,
+          att.gender?.toLowerCase().trim() || null,
+          'valid',
+        ]
+      );
+      inserted.push((rows as unknown as TicketRow[])[0]);
+    }
+
+    return inserted;
   }
 
   async createTickets(
@@ -31,10 +69,6 @@ export class BookingRepository {
     if (attendees.length === 0) return [];
 
     const inserted: TicketRow[] = [];
-
-    // Insert one-at-a-time so we can sign each ticket with deterministic
-    // event data. Bulk inserts are not possible here because the signature
-    // depends on the ticket's own UUID.
     const uuidGenerator = (): string => uuidv4();
     for (const att of attendees) {
       const ticketUuid = uuidGenerator();
@@ -94,14 +128,14 @@ export class BookingRepository {
     }
 
     const bookingRes = await getPool().query(
-      `SELECT * FROM bookings WHERE id = $1${userFilter} LIMIT 1`,
+      `SELECT * FROM bookings WHERE id = $1${userFilter} AND deleted_at IS NULL LIMIT 1`,
       params
     );
     const booking = (bookingRes.rows as unknown as BookingRow[])[0];
     if (!booking) return null;
 
     const ticketRes = await getPool().query(
-      'SELECT * FROM tickets WHERE booking_id = $1 ORDER BY id ASC',
+      'SELECT * FROM tickets WHERE booking_id = $1 AND deleted_at IS NULL ORDER BY id ASC',
       [bookingId]
     );
     return { booking, tickets: ticketRes.rows as unknown as TicketRow[] };
@@ -109,7 +143,7 @@ export class BookingRepository {
 
   async getTicketsByUuid(ticketUuid: string): Promise<TicketRow | null> {
     const { rows } = await getPool().query(
-      'SELECT * FROM tickets WHERE ticket_uuid = $1 LIMIT 1',
+      'SELECT * FROM tickets WHERE ticket_uuid = $1 AND deleted_at IS NULL LIMIT 1',
       [ticketUuid]
     );
     return (rows as unknown as TicketRow[])[0] || null;
@@ -225,7 +259,8 @@ export class BookingRepository {
          FROM bookings
         WHERE user_id = $1
           AND event_id = $2
-          AND status IN ('pending', 'confirmed', 'attended')`,
+          AND status IN ('pending', 'confirmed', 'attended', 'payment_pending')
+          AND deleted_at IS NULL`,
       [userId, eventId]
     );
     const total = (rows as Array<{ total: number | string }>)[0]?.total ?? 0;
@@ -236,13 +271,16 @@ export class BookingRepository {
 
   async cancelBooking(
     bookingId: number,
-    userId: number,
+    userId: number | undefined,
     reason: string | null
   ): Promise<{ cancelled: boolean; ticketCount: number; eventId: number | null }> {
     return withTransaction(async (client) => {
+      const userFilter = userId !== undefined ? ' AND user_id = $2' : '';
+      const params = userId !== undefined ? [bookingId, userId] : [bookingId];
+
       const lockRes = await client.query(
-        `SELECT * FROM bookings WHERE id = $1 AND user_id = $2 FOR UPDATE`,
-        [bookingId, userId]
+        `SELECT * FROM bookings WHERE id = $1${userFilter} FOR UPDATE`,
+        params
       );
       const booking = (lockRes.rows as unknown as BookingRow[])[0];
       if (!booking) {

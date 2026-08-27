@@ -37,11 +37,11 @@ export const config = {
   },
 
   jwt: {
-    secret: process.env.JWT_SECRET || 'change-me-user-secret',
+    secret: process.env.JWT_SECRET || '',
     expiresIn: process.env.JWT_EXPIRES_IN || '15m',
-    adminSecret: process.env.ADMIN_JWT_SECRET || 'change-me-admin-secret',
+    adminSecret: process.env.ADMIN_JWT_SECRET || '',
     adminExpiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '12h',
-    organizerSecret: process.env.ORGANIZER_JWT_SECRET || 'change-me-organizer-secret',
+    organizerSecret: process.env.ORGANIZER_JWT_SECRET || '',
     organizerExpiresIn: process.env.ORGANIZER_JWT_EXPIRES_IN || '8h',
   },
 
@@ -93,9 +93,9 @@ export const config = {
     defaultCancelWindowHours: asInt(process.env.BOOKING_CANCEL_WINDOW_HOURS, 6),
     /**
      * QR signing secret. Hot-swap by rotating this and disposing of old codes.
-     * In production this MUST be a long random string.
+     * MUST be set independently — never falls back to JWT secrets.
      */
-    qrSigningSecret: process.env.QR_SIGNING_SECRET || process.env.JWT_SECRET || 'change-me-qr-secret',
+    qrSigningSecret: process.env.QR_SIGNING_SECRET || '',
   },
 
   uploads: {
@@ -114,13 +114,26 @@ export const config = {
     bannerIdealHeight: 400,
   },
 
-  // ── Cashfree ──────────────────────────────────────────────────────────────────
-  cashfree: {
-    appId: process.env.CASHFREE_APP_ID || '',
-    secretKey: process.env.CASHFREE_SECRET_KEY || '',
-    webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || '',
-    returnUrl: process.env.CASHFREE_RETURN_URL || 'http://localhost:3001',
-    notifyUrl: process.env.CASHFREE_NOTIFY_URL || '',
+  // ── Payment Provider ────────────────────────────────────────────────────────
+  /**
+   * Payment provider configuration. Currently Federal Bank.
+   * The provider-specific credentials live here; the adapter layer
+   * translates these into provider API calls.
+   *
+   * Add new providers by extending the config — the domain layer never
+   * sees provider details.
+   */
+  paymentProvider: {
+    /** Provider key: 'federal_bank' | 'mock' (for dev/test) */
+    provider: (process.env.PAYMENT_PROVIDER || 'federal_bank') as 'federal_bank' | 'mock',
+    // Federal Bank credentials — replace placeholder values with real credentials
+    merchantId: process.env.PAYMENT_MERCHANT_ID || '',
+    merchantKey: process.env.PAYMENT_MERCHANT_KEY || '',
+    webhookSecret: process.env.PAYMENT_WEBHOOK_SECRET || '',
+    /** Base URL for payment pages (customer-facing redirect) */
+    returnUrl: process.env.PAYMENT_RETURN_URL || 'http://localhost:3001',
+    /** Full webhook endpoint URL for the provider to call back */
+    notifyUrl: process.env.PAYMENT_NOTIFY_URL || '',
   },
 
   // ── Redis ─────────────────────────────────────────────────────────────────────

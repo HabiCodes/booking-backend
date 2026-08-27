@@ -23,8 +23,18 @@ export class TurfSettlementService {
     const existing = await turfSettlementRepository.findItemByBooking(bookingId);
     if (existing) return;
 
-    const grossAmount = parseFloat(booking.amount);
-    const grossAmountPaise = rupeesToPaise(grossAmount);
+    // booking.amount is the CUSTOMER TOTAL (base + GST + platform fee).
+    // Extract the base subtotal from the pricingSnapshot stored in booking metadata.
+    // Fallback: reverse-calculate from total using known 18% GST + ₹50 flat.
+    const snapshot = booking.metadata?.pricingSnapshot as
+      | { subtotalPaise?: number }
+      | undefined;
+    let grossAmountPaise: number;
+    if (snapshot?.subtotalPaise && snapshot.subtotalPaise > 0) {
+      grossAmountPaise = snapshot.subtotalPaise;
+    } else {
+      grossAmountPaise = Math.round((parseFloat(booking.amount) * 100 - 5000) / 1.18);
+    }
 
     // All rates come from the single source of truth.
     const configSnapshot = await financialConfigService.getSnapshot(booking.organization_id);
@@ -37,21 +47,24 @@ export class TurfSettlementService {
     // Convert paise back to the existing rupees-with-2dp convention that the
     // turf_settlement_items columns expect (preserves DB contract + rounding).
     const commissionAmount = parseFloat(paiseToRupees(breakdown.commission_paise));
+    const gstAmount = parseFloat(paiseToRupees(breakdown.gst_on_platform_fee_paise));
     const tdsAmount = parseFloat(paiseToRupees(breakdown.tds_paise));
     const netAmount = parseFloat(paiseToRupees(breakdown.net_payable_to_business_paise));
 
     const pendingList = await turfSettlementRepository.findPendingByOrg(booking.organization_id);
     let settlement = pendingList[0];
     if (!settlement) {
-      settlement = await turfSettlementRepository.create({ organization_id: booking.organization_id });
+      settlement = await turfSettlementRepository.findOrCreatePendingSettlement(booking.organization_id);
     }
+
+    const baseAmount = parseFloat((grossAmountPaise / 100).toFixed(2));
 
     await turfSettlementRepository.addItem({
       settlement_id: settlement.id,
       booking_id: bookingId,
-      gross_amount: grossAmount,
+      gross_amount: baseAmount,
       commission_amount: commissionAmount,
-      tax_amount: tdsAmount,
+      tax_amount: gstAmount,
       net_amount: netAmount,
     });
 
@@ -59,7 +72,7 @@ export class TurfSettlementService {
   }
 
   async processDueSettlements() {
-    const allSettlements = await turfSettlementRepository.findPendingByOrg(0);
+    const allSettlements = await turfSettlementRepository.findPendingByOrg(undefined);
     let processed = 0, failed = 0;
     for (const s of allSettlements) {
       try {

@@ -30,6 +30,7 @@ export interface AdminRequest extends Request {
     role?: string;
     permissions?: Record<string, boolean>;
     permissionsUpdatedAt?: string;
+    organizationId?: number | null;  // null = super-admin (all orgs), non-null = org-scoped
   };
 }
 
@@ -66,7 +67,7 @@ async function verifyAdminIsActive(adminId: number): Promise<boolean> {
     if (!row) return false;
     return row.is_active;
   } catch {
-    return true; // fail open
+    return false; // fail closed — DB error means we cannot verify, deny access
   }
 }
 
@@ -82,7 +83,7 @@ async function verifyPermissionsFreshness(adminId: number, tokenUpdatedAt?: stri
     if (!row) return false;
     return row.permissions_updated_at <= tokenUpdatedAt;
   } catch {
-    return true; // fail open
+    return false; // fail closed — DB error means we cannot verify freshness, deny access
   }
 }
 
@@ -116,13 +117,18 @@ export async function adminAuthMiddleware(
       return next(new AppError('Permissions have been updated — please re-authenticate', 401));
     }
 
-    req.admin = decoded;
+    // Load organization_id for scanner authorization
+    let organizationId: number | null = null;
+    const { rows } = await getPool().query(
+      'SELECT organization_id FROM admins WHERE id = $1 LIMIT 1',
+      [decoded.id]
+    );
+    const row = (rows as Array<{ organization_id: number | null }>)[0];
+    organizationId = row?.organization_id ?? null;
+
+    req.admin = { ...decoded, organizationId };
     next();
   } catch {
-    // Catches:
-    //  - verifyAdminAccessToken() returning null/undefined (not AppError)
-    //  - verifyAdminIsActive / verifyPermissionsFreshness rejecting (DB failure → 401, not 500)
-    //  - Any other unexpected error → 401 to avoid leaking internals
     next(new AppError('Invalid or expired admin token', 401));
   }
 }

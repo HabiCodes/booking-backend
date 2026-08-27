@@ -30,6 +30,8 @@ interface TicketWithEvent {
   signature: string | null;
   ticket_deleted_at: string | null;
   event_deleted_at: string | null;
+  booking_status: string;
+  event_organization_id: number | null;
 }
 
 async function getTicketWithEvent(uuid: string): Promise<TicketWithEvent | null> {
@@ -37,7 +39,8 @@ async function getTicketWithEvent(uuid: string): Promise<TicketWithEvent | null>
     `SELECT t.ticket_uuid, t.attendee_name, t.checked_in, t.checked_in_at,
             t.signature, t.deleted_at AS ticket_deleted_at,
             e.id AS event_id, e.title AS event_title, e.start_at AS event_start_at,
-            e.end_at AS event_end_at, e.deleted_at AS event_deleted_at
+            e.end_at AS event_end_at, e.deleted_at AS event_deleted_at, e.organization_id AS event_organization_id,
+            b.status AS booking_status
        FROM tickets t
        INNER JOIN bookings b ON t.booking_id = b.id
        INNER JOIN events e ON b.event_id = e.id
@@ -58,11 +61,14 @@ export class ScanService {
   /**
    * Verify a ticket's current status:
    *  - EXPIRED: event has ended
-   *  - INVALID: ticket doesn't exist, soft-deleted, or signature mismatch
+   *  - INVALID: ticket doesn't exist, soft-deleted, signature mismatch, or org-scoped unauthorized
    *  - ALREADY_SCANNED: checked_in = true
    *  - VALID: everything checks out
+   *
+   * @param uuid - Ticket UUID to verify
+   * @param adminOrganizationId - null for super-admin (all orgs), non-null restricts to that org
    */
-  async verify(uuid: string): Promise<ScanResult> {
+  async verify(uuid: string, adminOrganizationId?: number | null): Promise<ScanResult> {
     if (!uuid || typeof uuid !== 'string') {
       throw new AppError('Invalid ticket UUID', 400);
     }
@@ -73,6 +79,55 @@ export class ScanService {
     }
     if (ticket.event_deleted_at !== null || ticket.event_title === null) {
       return { status: 'INVALID', message: 'Event has been removed' };
+    }
+
+    // Organization scoping: restrict admins to their own org's events
+    if (adminOrganizationId !== undefined && adminOrganizationId !== null
+        && ticket.event_organization_id !== adminOrganizationId) {
+      return {
+        status: 'INVALID',
+        ticket: {
+          uuid: ticket.ticket_uuid,
+          attendee_name: ticket.attendee_name,
+          event_title: ticket.event_title,
+          checked_in: false,
+          checked_in_at: null,
+          signature_valid: false,
+        },
+        message: 'Not authorized for this event',
+      };
+    }
+
+    // ── PAYMENT PENDING: ticket not yet confirmed ────────────────────────────
+    if (ticket.booking_status === 'payment_pending') {
+      return {
+        status: 'INVALID',
+        ticket: {
+          uuid: ticket.ticket_uuid,
+          attendee_name: ticket.attendee_name,
+          event_title: ticket.event_title,
+          checked_in: false,
+          checked_in_at: null,
+          signature_valid: false,
+        },
+        message: 'Payment not completed — ticket not yet valid',
+      };
+    }
+
+    // ── CANCELLED booking ───────────────────────────────────────────────────
+    if (ticket.booking_status === 'cancelled') {
+      return {
+        status: 'INVALID',
+        ticket: {
+          uuid: ticket.ticket_uuid,
+          attendee_name: ticket.attendee_name,
+          event_title: ticket.event_title,
+          checked_in: false,
+          checked_in_at: null,
+          signature_valid: false,
+        },
+        message: 'Booking has been cancelled',
+      };
     }
 
     const checkedInAtIso = toCheckedInAtIso(ticket.checked_in_at);
@@ -103,7 +158,7 @@ export class ScanService {
           event_title: ticket.event_title,
           checked_in: true,
           checked_in_at: checkedInAtIso,
-          signature_valid: true,
+          signature_valid: !!ticket.signature,
         },
         message: `Already scanned at ${checkedInAtIso}`,
       };
@@ -135,8 +190,12 @@ export class ScanService {
 
   /**
    * Mark a ticket as checked in. Returns the scan result.
+   *
+   * @param uuid - Ticket UUID to check in
+   * @param adminId - Admin ID performing the check-in
+   * @param adminOrganizationId - null for super-admin (all orgs), non-null restricts to that org
    */
-  async markCheckedIn(uuid: string, adminId: number): Promise<ScanResult> {
+  async markCheckedIn(uuid: string, adminId: number, adminOrganizationId?: number | null): Promise<ScanResult> {
     if (!uuid || typeof uuid !== 'string') {
       throw new AppError('Invalid ticket UUID', 400);
     }
@@ -146,7 +205,56 @@ export class ScanService {
       return { status: 'INVALID', message: 'Ticket does not exist' };
     }
 
+    // Organization scoping
+    if (adminOrganizationId !== undefined && adminOrganizationId !== null
+        && ticket.event_organization_id !== adminOrganizationId) {
+      return {
+        status: 'INVALID',
+        ticket: {
+          uuid: ticket.ticket_uuid,
+          attendee_name: ticket.attendee_name,
+          event_title: ticket.event_title,
+          checked_in: false,
+          checked_in_at: null,
+          signature_valid: false,
+        },
+        message: 'Not authorized for this event',
+      };
+    }
+
     const checkedInAtIso = toCheckedInAtIso(ticket.checked_in_at);
+
+    // ── PAYMENT PENDING: ticket not yet confirmed ────────────────────────────
+    if (ticket.booking_status === 'payment_pending') {
+      return {
+        status: 'INVALID',
+        ticket: {
+          uuid: ticket.ticket_uuid,
+          attendee_name: ticket.attendee_name,
+          event_title: ticket.event_title,
+          checked_in: false,
+          checked_in_at: null,
+          signature_valid: false,
+        },
+        message: 'Payment not completed — ticket not yet valid',
+      };
+    }
+
+    // ── CANCELLED booking ───────────────────────────────────────────────────
+    if (ticket.booking_status === 'cancelled') {
+      return {
+        status: 'INVALID',
+        ticket: {
+          uuid: ticket.ticket_uuid,
+          attendee_name: ticket.attendee_name,
+          event_title: ticket.event_title,
+          checked_in: false,
+          checked_in_at: null,
+          signature_valid: false,
+        },
+        message: 'Booking has been cancelled',
+      };
+    }
 
     // ── EXPIRED ─────────────────────────────────────────────────────────────
     if (ticket.event_end_at && new Date(ticket.event_end_at) < new Date()) {
@@ -177,6 +285,28 @@ export class ScanService {
           signature_valid: !!ticket.signature,
         },
         message: 'Ticket was already scanned',
+      };
+    }
+
+    // Verify HMAC signature before marking checked in
+    const sigResult = verifyTicketSignature(
+      { ticket_uuid: ticket.ticket_uuid },
+      ticket.event_id,
+      ticket.event_start_at,
+      ticket.signature
+    );
+    if (!sigResult.valid) {
+      return {
+        status: 'INVALID',
+        ticket: {
+          uuid: ticket.ticket_uuid,
+          attendee_name: ticket.attendee_name,
+          event_title: ticket.event_title,
+          checked_in: false,
+          checked_in_at: null,
+          signature_valid: false,
+        },
+        message: sigResult.reason ?? 'Invalid signature — cannot check in',
       };
     }
 

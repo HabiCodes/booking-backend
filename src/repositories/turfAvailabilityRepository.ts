@@ -135,7 +135,7 @@ export class TurfAvailabilityRepository {
 
   async markBooked(unitId: number): Promise<void> {
     await getPool().query(
-      "UPDATE turf_availability_units SET status = 'booked' WHERE id = $1",
+      "UPDATE turf_availability_units SET status = 'booked' WHERE id = $1 AND status = 'locked'",
       [unitId]
     );
   }

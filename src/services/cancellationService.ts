@@ -8,7 +8,7 @@
  *   4. Persists the immutable decision
  *   5. Returns the cancellation request in PENDING status
  *
- * Cashfree refund execution is NOT part of this service (Phase 2).
+ * Federal Bank refund execution is NOT part of this service (Phase 2).
  */
 
 import { withTransaction } from '../db/pool';

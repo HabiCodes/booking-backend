@@ -114,8 +114,8 @@ export class FinancialLedgerService {
         { type: 'platform_fee', direction: 'debit', amount: breakdown.platform_fee_paise },
         { type: 'gst_collected', direction: 'debit', amount: breakdown.gst_on_platform_fee_paise },
         { type: 'commission_earned', direction: 'debit', amount: breakdown.commission_paise },
-        { type: 'gst_collected', direction: 'credit', amount: breakdown.tds_paise },
-        { type: 'cancellation_fee', direction: 'credit', amount: breakdown.net_payable_to_business_paise },
+        { type: 'tds_collected', direction: 'credit', amount: breakdown.tds_paise },
+        { type: 'settlement_pending', direction: 'credit', amount: breakdown.net_payable_to_business_paise },
       ];
 
       if (breakdown.coupon_discount_paise > 0) {

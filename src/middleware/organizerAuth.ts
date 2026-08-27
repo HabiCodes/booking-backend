@@ -39,7 +39,7 @@ async function verifyOrganizerIsActive(userId: number): Promise<boolean> {
     if (!row) return false;
     return row.is_active;
   } catch {
-    return true; // fail open
+    return false; // fail closed — DB error means we cannot verify, deny access
   }
 }
 

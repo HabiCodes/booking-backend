@@ -12,10 +12,15 @@ export async function register(req: Request, res: Response, next: NextFunction) 
 
     if (!email || !password) throw new AppError('Email and password are required', 400);
     if (!validateEmail(email)) throw new AppError('Invalid email format', 400);
-    if (password.length < 8) throw new AppError('Password must be at least 8 characters', 400);
 
     const result = await authService.register(sanitizeString(email), password);
-    res.status(201).json({ success: true, data: result });
+    // legacy register() now delegates to OTP flow — account is pending
+    // until OTP verification. Return 202 (accepted) with the OTP info.
+    res.status(202).json({
+      success: true,
+      message: (result as Record<string, unknown>).message as string || 'Verification OTP sent. Please verify to complete registration.',
+      data: { email: result.user.email },
+    });
   } catch (err) {
     return next(err);
   }

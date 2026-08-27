@@ -15,7 +15,7 @@ import crypto from 'crypto';
 
 // ── Import the functions under test ──────────────────────────────────────────
 
-import { verifyWebhookSignature, buildIdempotencyKey } from '../../src/routes/turfWebhookRoutes';
+import { verifyWebhookSignature, turfWebhookIdempotencyKey } from '../../src/services/paymentWebhookHandler';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -123,31 +123,31 @@ describe('Webhook signature verification', () => {
 
 describe('Webhook idempotency key generation', () => {
   it('produces the same key for the same order + event type', () => {
-    const key1 = buildIdempotencyKey('ORD_123', 'PAYMENT_SUCCESS');
-    const key2 = buildIdempotencyKey('ORD_123', 'PAYMENT_SUCCESS');
+    const key1 = turfWebhookIdempotencyKey('ORD_123', 'PAYMENT_SUCCESS');
+    const key2 = turfWebhookIdempotencyKey('ORD_123', 'PAYMENT_SUCCESS');
     assert.strictEqual(key1, key2);
     assert.strictEqual(key1, 'turf_webhook_ORD_123_PAYMENT_SUCCESS');
   });
 
   it('produces different keys for different event types on the same order', () => {
-    const keySuccess = buildIdempotencyKey('ORD_123', 'PAYMENT_SUCCESS');
-    const keyFailed = buildIdempotencyKey('ORD_123', 'PAYMENT_FAILED');
+    const keySuccess = turfWebhookIdempotencyKey('ORD_123', 'PAYMENT_SUCCESS');
+    const keyFailed = turfWebhookIdempotencyKey('ORD_123', 'PAYMENT_FAILED');
     assert.notStrictEqual(keySuccess, keyFailed);
   });
 
   it('produces different keys for different orders with the same event type', () => {
-    const key1 = buildIdempotencyKey('ORD_AAA', 'PAYMENT_SUCCESS');
-    const key2 = buildIdempotencyKey('ORD_BBB', 'PAYMENT_SUCCESS');
+    const key1 = turfWebhookIdempotencyKey('ORD_AAA', 'PAYMENT_SUCCESS');
+    const key2 = turfWebhookIdempotencyKey('ORD_BBB', 'PAYMENT_SUCCESS');
     assert.notStrictEqual(key1, key2);
   });
 
   it('does NOT contain timestamps or random values', () => {
-    const key = buildIdempotencyKey('ORD_123', 'PAYMENT_SUCCESS');
+    const key = turfWebhookIdempotencyKey('ORD_123', 'PAYMENT_SUCCESS');
     assert.ok(!key.includes(Date.now().toString()), 'key must not contain timestamps');
     // Generate many keys — they should all be identical for the same input
     const keys = new Set<string>();
     for (let i = 0; i < 100; i++) {
-      keys.add(buildIdempotencyKey('ORD_123', 'PAYMENT_SUCCESS'));
+      keys.add(turfWebhookIdempotencyKey('ORD_123', 'PAYMENT_SUCCESS'));
     }
     assert.strictEqual(keys.size, 1, 'all 100 keys must be identical — no randomness');
   });
@@ -159,7 +159,7 @@ describe('Webhook replay / retry safety', () => {
     const eventType = 'PAYMENT_SUCCESS';
     const keys: string[] = [];
     for (let i = 0; i < 10; i++) {
-      keys.push(buildIdempotencyKey(orderId, eventType));
+      keys.push(turfWebhookIdempotencyKey(orderId, eventType));
     }
     const uniqueKeys = new Set(keys);
     assert.strictEqual(uniqueKeys.size, 1, 'all 10 retries must produce identical key');

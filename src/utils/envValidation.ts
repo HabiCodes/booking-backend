@@ -46,8 +46,8 @@ const PRODUCTION_REQUIRED: ValidationRule[] = [
     hint: 'A long random string (≥32 chars) — used to sign ticket QR payloads.',
   },
   {
-    key: 'CASHFREE_WEBHOOK_SECRET',
-    hint: 'Cashfree webhook HMAC secret — required to verify incoming webhooks.',
+    key: 'PAYMENT_WEBHOOK_SECRET',
+    hint: 'Payment provider webhook HMAC secret — required to verify incoming webhooks.',
   },
   {
     key: 'CORS_ORIGIN',
@@ -158,12 +158,12 @@ export function validateEnv(): EnvValidationResult {
     );
   }
 
-  // Cashfree webhook sanity — warn if the notify URL is missing in production.
-  // Without it, Cashfree cannot deliver payment status webhooks and bookings
-  // will get stuck in pending_payment.
-  if (isProd && !process.env.CASHFREE_NOTIFY_URL) {
+  // Payment provider sanity — warn if the notify URL is missing in production.
+  // Without it, the payment provider cannot deliver payment status webhooks and
+  // bookings will get stuck in pending_payment.
+  if (isProd && !process.env.PAYMENT_NOTIFY_URL) {
     warnings.push(
-      'CASHFREE_NOTIFY_URL is not set. Set it to the full deployed webhook URL (e.g. https://your-app.onrender.com/api/v1/webhooks/cashfree).',
+      'PAYMENT_NOTIFY_URL is not set. Set it to the full deployed webhook URL (e.g. https://your-app.onrender.com/api/v1/webhooks/payment).',
     );
   }
 

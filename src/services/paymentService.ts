@@ -1,27 +1,32 @@
 /**
- * Payment Service — orchestration layer for Cashfree payment flows.
+ * Universal Payment Service — provider-agnostic orchestration layer.
  *
  * Responsibilities:
  *   1. Create payment orders (with idempotency)
  *   2. Verify payments (after callback or webhook)
- *   3. Handle Cashfree webhook notifications
+ *   3. Handle payment provider webhook notifications
  *   4. Process refunds
  *   5. Poll stale orders for reconciliation
  *
- * NEVER expose Cashfree credentials to the client.
+ * This service NEVER knows which payment provider it's talking to —
+ * that's the gateway's job. It delegates all provider-specific operations
+ * to an IPaymentGateway implementation.
+ *
+ * Domain services (event, turf, movie) should use this service, never
+ * the gateway directly.
  */
 
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
-import { withTransaction } from '../db/pool';
-import type { PaymentOrderRow, PaymentOrderStatus, PaymentOrderCreateInput, RefundRow, RefundCreateInput, RefundPublic } from '../types';
+import { withTransaction, getPool } from '../db/pool';
+import type { PaymentOrderRow, PaymentOrderStatus, PaymentOrderCreateInput, RefundRow, RefundCreateInput } from '../types';
 
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
 import { refundRepository } from '../repositories/refundRepository';
 import { webhookEventRepository } from '../repositories/webhookEventRepository';
 import { eventRepository } from '../repositories/eventRepository';
-import { CashfreePaymentGateway } from './cashfreeService';
 import type { IPaymentGateway, PollPaymentResult } from './paymentGateway';
+import { PricingEngine } from './pricingEngine';
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -30,7 +35,7 @@ export class PaymentService {
 
   /**
    * Create a payment order with idempotency check.
-   * Returns the payment session ID for the frontend to open Cashfree's payment modal.
+   * Returns the payment session ID for the frontend to open the payment modal.
    */
   async createOrder(input: PaymentOrderCreateInput & {
     customerEmail: string;
@@ -44,11 +49,11 @@ export class PaymentService {
       const existing = await paymentOrderRepository.findByIdempotencyKey(input.idempotency_key);
       if (existing) {
         logger.info('Idempotent createOrder returning existing', { orderId: existing.order_id });
-        return { order: existing, paymentSessionId: existing.cf_payment_session_id || '' };
+        return { order: existing, paymentSessionId: existing.provider_session_id || '' };
       }
     }
 
-    // 2) Resolve organization — either from event (Event domain) or directly (Turf domain)
+    // 2) Resolve organization — either from event (Event domain) or directly (Turf/Movie domain)
     let organizationId: number | null | undefined = input.organization_id;
     if (input.event_id != null) {
       const event = await eventRepository.getEventById(input.event_id);
@@ -79,13 +84,15 @@ export class PaymentService {
       currency: input.currency || 'INR',
       order_id: input.orderId,
       idempotency_key: input.idempotency_key,
+      payment_gateway: this.gateway.name as PaymentOrderRow['payment_gateway'],
+      financial_snapshot: (input as any).financial_snapshot ?? null,
     });
 
-    // 5) Update with gateway data
+    // 5) Update with gateway data (provider-agnostic field names)
     await paymentOrderRepository.updateFromWebhook(order.order_id, {
       status: 'ACTIVE',
-      cf_payment_session_id: gatewayResult.gatewayResponse.payment_session_id,
-      cf_order_token: '',
+      provider_session_id: gatewayResult.gatewayResponse.payment_session_id,
+      provider_order_token: '',
     });
 
     const updated = await paymentOrderRepository.findByOrderId(order.order_id)!;
@@ -107,7 +114,7 @@ export class PaymentService {
 
     const updated = await paymentOrderRepository.updateFromWebhook(orderId, {
       status: verifyResult.status,
-      cf_payment_id: verifyResult.paymentId || undefined,
+      provider_payment_id: verifyResult.paymentId || undefined,
       payment_method: verifyResult.paymentMethod || undefined,
       error_code: verifyResult.errorCode || undefined,
       error_message: verifyResult.errorMessage || undefined,
@@ -125,7 +132,7 @@ export class PaymentService {
   }
 
   /**
-   * Handle an incoming Cashfree webhook.
+   * Handle an incoming payment provider webhook.
    * Idempotent — uses the webhook_events idempotency key to avoid double-processing.
    */
   async handleWebhook(
@@ -146,7 +153,7 @@ export class PaymentService {
     if (!orderId) throw new AppError('Missing order_id in webhook payload', 400);
 
     // 2) Record webhook event
-    await webhookEventRepository.create(eventType, idempotencyKey, rawPayload, orderId);
+    const webhookEvent = await webhookEventRepository.create(eventType, idempotencyKey, rawPayload, orderId);
 
     // 3) Verify signature if available
     const signature = rawPayload['signature'] as string | undefined;
@@ -158,12 +165,12 @@ export class PaymentService {
     // 4) Process the payment event
     try {
       const order = await this.processWebhookEvent(orderId, eventType, rawPayload);
-      await webhookEventRepository.markProcessed(existing?.id || 0);
+      await webhookEventRepository.markProcessed(webhookEvent.id);
       logger.info('Webhook processed successfully', { orderId, eventType });
       return order;
     } catch (err) {
       logger.error('Webhook processing failed', { orderId, eventType, error: (err as Error).message });
-      await webhookEventRepository.markFailed(existing?.id || 0, (err as Error).message);
+      await webhookEventRepository.markFailed(webhookEvent.id, (err as Error).message);
       throw err;
     }
   }
@@ -174,12 +181,15 @@ export class PaymentService {
    * Concurrency safety:
    *   - The payment order row is locked (SELECT ... FOR UPDATE) at the start
    *     of the transaction. This serializes concurrent refund requests for the
-   *     same order and prevents the TOCTOU race where two requests could both
-   *     read totalRefunded = 0 before either commits.
+   *     same order and prevents the TOCTOU race.
    *   - The remaining-refundable amount is computed and validated BEFORE calling
-   *     the Cashfree gateway, so the DB-side check is authoritative.
+   *     the gateway, so the DB-side check is authoritative.
    */
   async processRefund(input: RefundCreateInput, actor: { adminId?: number; userId?: number }): Promise<RefundRow> {
+    // NO CUSTOMER REFUND POLICY — only admin-initiated settlements allowed
+    if (input.refund_type === 'customer_initiated') {
+      throw new AppError('Customer refunds are not permitted. Use settlement workflow for organisation payouts.', 403);
+    }
     return withTransaction(async (client) => {
       // 1. Lock the payment order row — serializes concurrent refunds
       const orderResult = await client.query(
@@ -209,7 +219,7 @@ export class PaymentService {
         );
       }
 
-      // 4. Call Cashfree gateway (outside the critical section is fine — the DB
+      // 4. Call payment gateway (outside the critical section is fine — the DB
       //    lock already prevents concurrent approval; if the gateway fails, the
       //    transaction rolls back and no state changes)
       const result = await this.gateway.createRefund({
@@ -224,7 +234,7 @@ export class PaymentService {
         booking_id: order.booking_id,
         amount: Number(input.amount),
         reason: input.reason ?? undefined,
-        refund_type: input.refund_type ?? 'customer_initiated',
+        refund_type: input.refund_type ?? 'admin_initiated',
       }, client);
 
       // 6. Update payment order status based on new total (uses the transaction client)
@@ -245,8 +255,9 @@ export class PaymentService {
    */
   async reconcileStaleOrders(olderThanMinutes: number = 30): Promise<PaymentOrderRow[]> {
     const cutoff = new Date(Date.now() - olderThanMinutes * 60_000).toISOString();
-    const staleOrders = (await paymentOrderRepository.findByOrganization(0, { pageSize: 100 }))
-      .items.filter(o => ['CREATED', 'ACTIVE'].includes(o.status) && o.created_at < cutoff);
+    const { rows: staleRows } = await getPool()
+      .query(`SELECT * FROM payment_orders WHERE status IN ('CREATED','ACTIVE') AND created_at < $1 ORDER BY created_at ASC LIMIT 100`, [cutoff]);
+    const staleOrders = staleRows as unknown as PaymentOrderRow[];
 
     const reconciled: PaymentOrderRow[] = [];
     for (const order of staleOrders) {
@@ -276,7 +287,7 @@ export class PaymentService {
     const order = await paymentOrderRepository.findByOrderId(orderId);
     if (!order) throw new AppError('Order not found for webhook', 404);
 
-    // Map Cashfree event types to our status
+    // Provider event type mapping — each provider maps its event types to our statuses
     const statusMap: Record<string, PaymentOrderStatus> = {
       'ORDER_CREATED': 'ACTIVE',
       'PAYMENT_SUCCESS': 'COMPLETED',
@@ -290,7 +301,7 @@ export class PaymentService {
       const paymentData = (payload.data as Record<string, unknown>) || {};
       await paymentOrderRepository.updateFromWebhook(orderId, {
         status: newStatus,
-        cf_payment_id: (paymentData.cf_payment_id as string) || undefined,
+        provider_payment_id: (paymentData.provider_payment_id as string) || undefined,
         payment_method: (paymentData.payment_method as string) || undefined,
         error_code: (payload as { error_details?: { error_code: string } }).error_details?.error_code,
         error_message: (payload as { error_details?: { error_message: string } }).error_details?.error_message,
@@ -302,28 +313,38 @@ export class PaymentService {
     return updated;
   }
 
+  /**
+   * Verify that the payment amount matches the server-calculated expected amount.
+   * ALWAYS call this before confirming a booking. Never trust client-provided amounts.
+   */
+  verifyPaymentAmount(expectedPaise: number, paidPaise: number): void {
+    if (expectedPaise !== paidPaise) {
+      throw new AppError(
+        `Payment amount mismatch: expected ${expectedPaise} paise (₹${(expectedPaise / 100).toFixed(2)}), ` +
+        `received ${paidPaise} paise (₹${(paidPaise / 100).toFixed(2)})`, 402);
+    }
+  }
 }
 
 /**
- * Factory — creates a PaymentService wired to a Cashfree gateway instance.
+ * Factory — creates a PaymentService wired to any IPaymentGateway implementation.
  */
-export function createPaymentService(config: { readonly appId: string; readonly secretKey: string; readonly webhookSecret: string; readonly returnUrl: string; readonly notifyUrl: string }): PaymentService {
-  return new PaymentService(new CashfreePaymentGateway(config));
+export function createPaymentService(gateway: IPaymentGateway): PaymentService {
+  return new PaymentService(gateway);
 }
 
-let _paymentService: PaymentService | null = null;
-export function getPaymentService(config?: { readonly appId: string; readonly secretKey: string; readonly webhookSecret: string; readonly returnUrl: string; readonly notifyUrl: string }): PaymentService {
-  if (!_paymentService && config) {
-    _paymentService = createPaymentService(config);
+// ── Module-level singleton ────────────────────────────────────────────────────
+// Depends on config being loaded (it always is at this point since server.ts
+// imports config first). Gateway is injected lazily on first use.
+
+let _singleton: PaymentService | null = null;
+
+export function getPaymentService(gateway?: IPaymentGateway): PaymentService {
+  if (!_singleton) {
+    if (!gateway) {
+      throw new AppError('PaymentService not initialized — pass a gateway on first call', 500);
+    }
+    _singleton = createPaymentService(gateway);
   }
-  if (!_paymentService) {
-    _paymentService = createPaymentService({
-      appId: process.env.CASHFREE_APP_ID || '',
-      secretKey: process.env.CASHFREE_SECRET_KEY || '',
-      webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET || '',
-      returnUrl: process.env.CASHFREE_RETURN_URL || '',
-      notifyUrl: process.env.CASHFREE_NOTIFY_URL || '',
-    });
-  }
-  return _paymentService;
+  return _singleton;
 }
