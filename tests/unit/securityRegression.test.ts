@@ -95,10 +95,10 @@ describe('P1 — Scanner permission enforcement', () => {
     assert.strictEqual(perms['scanner:checkin'], true);
   });
 
-  it('event_manager does NOT have scanner permissions by default', () => {
+  it('event_manager has scanner permissions by default', () => {
     const perms = computePermissions('event_manager', undefined);
-    assert.strictEqual(perms['scanner:verify'], false);
-    assert.strictEqual(perms['scanner:checkin'], false);
+    assert.strictEqual(perms['scanner:verify'], true);
+    assert.strictEqual(perms['scanner:checkin'], true);
   });
 
   it('admin role has scanner permissions', () => {

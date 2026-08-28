@@ -9,11 +9,15 @@ import { Router, type Request, type Response } from 'express';
 import { organizerAuthMiddleware, type OrganizerRequest } from '../middleware/organizerAuth';
 import { ownerDashboardService } from '../services/ownerDashboardService';
 import { AppError } from '../middleware/errorHandler';
+import { requireOwner } from '../middleware/organizerPermissionMiddleware';
 
 const router = Router();
 
 // All routes require a valid organizer JWT
 router.use(organizerAuthMiddleware);
+
+// All owner dashboard routes require owner role
+router.use(requireOwner);
 
 /**
  * GET /api/owner/dashboard

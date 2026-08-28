@@ -63,6 +63,7 @@ export const ROLE_DEFAULTS: Record<string, Set<AdminPermission>> = {
     'uploads:read', 'uploads:write',
     'media:read', 'media:write',
     'analytics:read',
+    'scanner:verify', 'scanner:checkin',
   ]),
 
   ticket_scanner: new Set([

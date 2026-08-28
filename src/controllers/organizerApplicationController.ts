@@ -29,7 +29,10 @@ export async function submitOrganizerApplication(req: Request, res: Response, ne
       throw new AppError(`listing_category must be one of: ${validCategories.join(', ')}`, 400);
     }
 
-    const result = await organizerApplicationService.submit(body);
+    // Support resubmission of soft-rejected applications
+    const existingId = body.existingId ? parseInt(body.existingId, 10) : undefined;
+
+    const result = await organizerApplicationService.submit(body, existingId);
     res.status(result.isNew ? 201 : 200).json({
       success: true,
       data: result.application,
