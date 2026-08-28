@@ -191,13 +191,18 @@ export async function createManager(req: AdminRequest, res: Response, next: Next
     }
     const tempPassword = generateTempPassword();
 
+    const normalizedRole = (role === 'manager') ? 'manager' : 'manager';
+    if (role !== undefined && role !== 'manager') {
+      throw new AppError('Role must be "manager"', 400);
+    }
+
     const user = await organizerUserRepository.create({
       organization_id,
       email,
       name,
       phone: phone ?? null,
       password: tempPassword,
-      role: role || 'manager',  
+      role: normalizedRole,
       permissions: permissions || {},
     });
 

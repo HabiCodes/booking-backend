@@ -15,6 +15,8 @@ interface AdminRecord {
   last_login_at: string | null;
   permissions: Record<string, boolean>;
   permissions_updated_at: string | null;
+  failed_login_attempts: number;
+  locked_until: string | null;
 }
 
 function normalizePermissions(value: unknown): Record<string, boolean> {
@@ -39,6 +41,8 @@ function rowToRecord(r: AdminRecord): AdminRecord {
     last_login_at: r.last_login_at,
     permissions: normalizePermissions(r.permissions),
     permissions_updated_at: r.permissions_updated_at ?? null,
+    failed_login_attempts: Number(r.failed_login_attempts),
+    locked_until: r.locked_until ?? null,
   };
 }
 
@@ -49,7 +53,8 @@ export class AdminService {
    */
   async login(email: string, password: string) {
     const { rows } = await getPool().query(
-      `SELECT id, email, password_hash, name, role, is_active, last_login_at, permissions, permissions_updated_at
+      `SELECT id, email, password_hash, name, role, is_active, last_login_at, permissions, permissions_updated_at,
+        failed_login_attempts, locked_until
        FROM admins WHERE email = $1 LIMIT 1`,
       [email.toLowerCase().trim()]
     );
@@ -59,14 +64,25 @@ export class AdminService {
     if (!admin) {
       throw new AppError('Invalid credentials', 401);
     }
+
+    // Account lockout check
+    if (admin.locked_until && new Date(admin.locked_until) > new Date()) {
+      throw new AppError('Account temporarily locked. Try again later.', 423);
+    }
+
     if (!admin.is_active) {
       throw new AppError('Account is disabled', 403);
     }
 
     const valid = await comparePassword(password, admin.password_hash);
     if (!valid) {
+      // Record failed attempt and lock if threshold exceeded
+      await this._recordFailedLogin(admin.id);
       throw new AppError('Invalid credentials', 401);
     }
+
+    // Reset failed login counter on success
+    await this._resetFailedLogin(admin.id);
 
     const effectivePermissions = computePermissions(admin.role, admin.permissions);
     const token = generateAdminAccessToken(admin.id, admin.email, admin.role, effectivePermissions, admin.permissions_updated_at);
@@ -168,6 +184,22 @@ export class AdminService {
       [JSON.stringify(permissions), id]
     );
     return (rowCount ?? 0) > 0;
+  }
+
+  async _recordFailedLogin(adminId: number): Promise<void> {
+    await getPool().query(
+      `UPDATE admins SET failed_login_attempts = failed_login_attempts + 1,
+        locked_until = CASE WHEN failed_login_attempts + 1 >= 5 THEN NOW() + INTERVAL '15 minutes' ELSE locked_until END
+       WHERE id = $1`,
+      [adminId]
+    );
+  }
+
+  async _resetFailedLogin(adminId: number): Promise<void> {
+    await getPool().query(
+      'UPDATE admins SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1',
+      [adminId]
+    );
   }
 }
 

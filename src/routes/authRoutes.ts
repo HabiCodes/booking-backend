@@ -25,14 +25,14 @@ import { authRateLimiter, resendVerificationLimiter, otpVerifyLimiter } from '..
 const router = Router();
 
 // ── Legacy endpoints (kept for backward compat) ──────────────────────────────
-router.post('/register', register);
+router.post('/register', authRateLimiter, register);
 router.post('/login', authRateLimiter, login);
 
 // ── Enhanced endpoints ──────────────────────────────────────────────────────
 router.post('/register-enhanced', authRateLimiter, registerEnhanced);
 router.post('/login-enhanced', authRateLimiter, loginEnhanced);
 // GET so the verification link in the email is a plain anchor href
-router.get('/verify-email', verifyEmail);
+router.get('/verify-email', authRateLimiter, verifyEmail);
 router.post('/resend-verification', resendVerificationLimiter, resendVerification);
 
 // ── OTP Registration (preferred new flow) ───────────────────────────────────

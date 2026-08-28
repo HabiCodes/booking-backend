@@ -10,6 +10,9 @@
 import jwt, { type SignOptions, type JwtPayload } from 'jsonwebtoken';
 import { config } from '../config';
 
+const ALGORITHMS: jwt.Algorithm[] = ['HS256'];
+const VERIFY_OPTIONS: jwt.VerifyOptions = { algorithms: ALGORITHMS };
+
 const ACCESS_EXPIRY = config.jwt.expiresIn;        // e.g. '15m'
 const REFRESH_EXPIRY_DAYS = 30;                     // 30 days
 
@@ -102,7 +105,7 @@ export function generateOrganizerAccessToken(
 
 export function verifyAccessToken(token: string): AccessTokenPayload | null {
   try {
-    const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;
+    const decoded = jwt.verify(token, config.jwt.secret, VERIFY_OPTIONS) as JwtPayload;
     if (!verifyTokenType(decoded, 'access')) return null;
     if (typeof decoded.id !== 'number' || typeof decoded.sub !== 'string') return null;
     const sessionId = typeof decoded.session_id === 'number' ? decoded.session_id : undefined;
@@ -114,7 +117,7 @@ export function verifyAccessToken(token: string): AccessTokenPayload | null {
 
 export function verifyRefreshToken(token: string): { id: number; email: string; typ?: string } | null {
   try {
-    const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;
+    const decoded = jwt.verify(token, config.jwt.secret, VERIFY_OPTIONS) as JwtPayload;
     if (!verifyTokenType(decoded, 'refresh')) return null;
     if (typeof decoded.id !== 'number' || typeof decoded.sub !== 'string') return null;
     return { id: decoded.id, email: decoded.sub, typ: decoded.typ };
@@ -128,7 +131,7 @@ export function verifyRefreshToken(token: string): { id: number; email: string; 
  */
 export function verifyAdminAccessToken(token: string): { id: number; email: string; role?: string; permissions?: Record<string, boolean>; permissionsUpdatedAt?: string } | null {
   try {
-    const decoded = jwt.verify(token, config.jwt.adminSecret) as JwtPayload;
+    const decoded = jwt.verify(token, config.jwt.adminSecret, VERIFY_OPTIONS) as JwtPayload;
     if (!verifyTokenType(decoded, 'admin_access')) return null;
     if (typeof decoded.id !== 'number' || typeof decoded.sub !== 'string') return null;
     const role = typeof decoded.role === 'string' ? decoded.role : undefined;
@@ -147,7 +150,7 @@ export function verifyAdminAccessToken(token: string): { id: number; email: stri
  */
 export function verifyOrganizerAccessToken(token: string): { id: number; organizationId: number; email: string; name: string; role: 'owner' | 'manager'; permissions: Record<string, boolean> } | null {
   try {
-    const decoded = jwt.verify(token, config.jwt.organizerSecret) as JwtPayload;
+    const decoded = jwt.verify(token, config.jwt.organizerSecret, VERIFY_OPTIONS) as JwtPayload;
     if (!verifyTokenType(decoded, 'organizer_access')) return null;
     if (typeof decoded.id !== 'number') return null;
     if (typeof decoded.sub !== 'string') return null;

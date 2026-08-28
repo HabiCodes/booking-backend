@@ -58,10 +58,23 @@ export class OrganizerAuthService {
       throw new AppError('Invalid email or password', 401);
     }
 
+    // Account lockout check (P0 — prevent brute-force on organizer accounts)
+    if (user.locked_until && new Date(user.locked_until) > new Date()) {
+      throw new AppError('Account temporarily locked. Try again later.', 423);
+    }
+
     const passwordValid = await organizerUserRepository.verifyPassword(user, input.password);
     if (!passwordValid) {
+      // Increment failed_login_attempts; lock after 5 failures
+      const failed = await organizerUserRepository.recordFailedLogin(user.id);
+      if (failed.shouldLock) {
+        throw new AppError('Account temporarily locked. Try again later.', 423);
+      }
       throw new AppError('Invalid email or password', 401);
     }
+
+    // Reset failed_login_attempts on successful login
+    await organizerUserRepository.resetFailedLogin(user.id);
 
     const result = await this.issueTokens(user);
     await organizerUserRepository.updateLastLogin(user.id);
@@ -102,12 +115,13 @@ export class OrganizerAuthService {
       true
     );
 
-    // Persist refresh token hash (fire-and-forget — don't block token issuance)
+    // Persist refresh token hash — MUST succeed before returning tokens to avoid
+    // a false reuse-detection cascade if the DB write fails silently
     const tokenHash = hashToken(refreshToken);
     const tokenExpiry = new Date(Date.now() + 30 * 24 * 3600_000).toISOString();
-    organizerRefreshTokenRepository
-      .createRefreshToken(Number(user.id), tokenHash, sessionId, null, null, tokenExpiry)
-      .catch((err) => logger.warn('Failed to persist organizer refresh token:', err));
+    await organizerRefreshTokenRepository.createRefreshToken(
+      Number(user.id), tokenHash, sessionId, null, null, tokenExpiry
+    );
 
     const { password_hash: _pw, ...safeUser } = user as unknown as Record<string, unknown>;
     return {
@@ -178,7 +192,7 @@ export class OrganizerAuthService {
 
   verifyAccessToken(token: string): OrganizerTokenPayload | null {
     try {
-      const decoded = jwt.verify(token, config.jwt.organizerSecret) as JwtPayload;
+      const decoded = jwt.verify(token, config.jwt.organizerSecret, { algorithms: ['HS256'] }) as JwtPayload;
       if (decoded.typ !== undefined && decoded.typ !== 'organizer_access') return null;
       if (typeof decoded.id !== 'number' || typeof decoded.sub !== 'string') return null;
       return {
@@ -197,7 +211,7 @@ export class OrganizerAuthService {
 
   verifyRefreshToken(token: string): { sub: number; typ: string } | null {
     try {
-      const decoded = jwt.verify(token, config.jwt.organizerSecret) as JwtPayload;
+      const decoded = jwt.verify(token, config.jwt.organizerSecret, { algorithms: ['HS256'] }) as JwtPayload;
       if (decoded.typ !== undefined && decoded.typ !== 'organizer_refresh') return null;
       if (typeof decoded.sub !== 'number') return null;
       return { sub: decoded.sub, typ: decoded.typ || 'organizer_refresh' };

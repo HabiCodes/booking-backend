@@ -83,6 +83,26 @@ export class OrganizerUserRepository {
     await getPool().query('UPDATE organizer_users SET last_login_at = NOW() WHERE id = $1', [id]);
   }
 
+  async recordFailedLogin(id: number): Promise<{ attempts: number; shouldLock: boolean }> {
+    const { rows } = await getPool().query(
+      `UPDATE organizer_users SET failed_login_attempts = failed_login_attempts + 1,
+        locked_until = CASE WHEN failed_login_attempts + 1 >= 5 THEN NOW() + INTERVAL '15 minutes' ELSE locked_until END
+       WHERE id = $1 RETURNING failed_login_attempts, locked_until`,
+      [id]
+    );
+    const row = (rows as Array<{ failed_login_attempts: number; locked_until: string | null }>)[0];
+    if (!row) return { attempts: 0, shouldLock: false };
+    const shouldLock = row.locked_until !== null && new Date(row.locked_until) > new Date();
+    return { attempts: row.failed_login_attempts, shouldLock };
+  }
+
+  async resetFailedLogin(id: number): Promise<void> {
+    await getPool().query(
+      'UPDATE organizer_users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1',
+      [id]
+    );
+  }
+
   async verifyPassword(user: OrganizerUserRow, password: string): Promise<boolean> {
     return comparePassword(password, user.password_hash);
   }

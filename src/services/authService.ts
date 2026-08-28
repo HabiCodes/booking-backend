@@ -89,6 +89,7 @@ import { generateSecureToken, hashToken } from '../utils/safeToken';
 import { generateAccessToken, generateRefreshToken, verifyAccessToken, verifyRefreshToken } from '../utils/jwt';
 import { logger } from '../utils/logger';
 import { getRedis } from '../db/redis';
+import { withTransaction } from '../db/pool';
 import type {
   RefreshTokenRow,
   UserRow,
@@ -280,7 +281,7 @@ export class AuthService {
     const user = await userRepository.findById(userId);
     if (!user) throw new Error('Failed to fetch created user');
 
-    const tokens = this.issueTokens(userId, normalizedEmail);
+    const tokens = await this.issueTokens(userId, normalizedEmail);
 
     return { tokens, user, isNewUser: true };
   }
@@ -465,7 +466,7 @@ export class AuthService {
       true
     );
 
-    const tokens = this.issueTokens(created.id, created.email, sessionId);
+    const tokens = await this.issueTokens(created.id, created.email, sessionId);
 
     return {
       success: true,
@@ -571,7 +572,7 @@ export class AuthService {
       null, // userAgent — set by caller
       true
     );
-    const tokens = this.issueTokens(Number(user.id), user.email, sessionId);
+    const tokens = await this.issueTokens(Number(user.id), user.email, sessionId);
 
     const publicUser: UserPublic = {
       id: user.id,
@@ -639,7 +640,7 @@ export class AuthService {
     // bound to the originating device session. This keeps the "active
     // sessions" list accurate and ensures revocation by session_id works.
     const sessionId = consumed.session_id ?? undefined;
-    return this.issueTokens(payload.id, user.email, sessionId);
+    return await this.issueTokens(payload.id, user.email, sessionId);
   }
 
   // ── Logout ────────────────────────────────────────────────────────────────
@@ -673,20 +674,33 @@ export class AuthService {
 
   async verifyEmail(rawToken: string): Promise<VerificationResult> {
     const tokenHash = hashToken(rawToken);
-    const tokenRow = await authRepository.findVerificationToken(tokenHash);
 
-    if (!tokenRow) {
-      return { success: false, message: 'Invalid verification token' };
-    }
+    return await withTransaction(async (client) => {
+      const tokenResult = await client.query(
+        'SELECT * FROM verification_tokens WHERE token_hash = $1 AND used_at IS NULL FOR UPDATE',
+        [tokenHash]
+      );
+      const tokenRow = tokenResult.rows[0];
 
-    if (new Date(tokenRow.expires_at) < new Date()) {
-      return { success: false, message: 'Verification link has expired. Please request a new one.' };
-    }
+      if (!tokenRow) {
+        return { success: false, message: 'Invalid verification token' };
+      }
 
-    await authRepository.markVerificationTokenUsed(tokenHash);
-    await authRepository.markUserVerified(tokenRow.user_id);
+      if (new Date(tokenRow.expires_at) < new Date()) {
+        return { success: false, message: 'Verification link has expired. Please request a new one.' };
+      }
 
-    return { success: true, message: 'Email verified successfully. You can now log in.' };
+      await client.query(
+        'UPDATE verification_tokens SET used_at = NOW() WHERE token_hash = $1',
+        [tokenHash]
+      );
+      await client.query(
+        'UPDATE users SET is_verified = true, email_verified_at = NOW() WHERE id = $1',
+        [tokenRow.user_id]
+      );
+
+      return { success: true, message: 'Email verified successfully. You can now log in.' };
+    });
   }
 
   async resendVerification(email: string, deviceInfo?: string | null): Promise<VerificationResult> {
@@ -763,31 +777,41 @@ export class AuthService {
   async resetPassword(rawToken: string, newPassword: string): Promise<void> {
     const tokenHash = hashToken(rawToken);
 
-    // Find a non-expired, unused password_reset token
-    const tokenRow = await authRepository.findVerificationToken(tokenHash);
-    if (!tokenRow || tokenRow.type !== 'password_reset') {
-      throw new Error('Invalid or expired password reset token');
-    }
+    // Atomic: password update + token consumption in a single transaction.
+    // Prevents the race where two concurrent requests with the same token
+    // could both pass validation before either marks the token as consumed.
+    await withTransaction(async (client) => {
+      // Find a non-expired, unused password_reset token (FOR UPDATE to lock row)
+      const tokenResult = await client.query(
+        `SELECT * FROM verification_tokens WHERE token_hash = $1 AND type = 'password_reset' AND used_at IS NULL AND expires_at > NOW() FOR UPDATE`,
+        [tokenHash]
+      );
+      const tokenRow = tokenResult.rows[0];
 
-    // Password policy
-    const policyResult = validatePassword(newPassword, defaultPasswordPolicy);
-    if (!policyResult.valid) {
-      throw new AppError(policyResult.errors.join('; '), 400);
-    }
+      if (!tokenRow) {
+        throw new Error('Invalid or expired password reset token');
+      }
 
-    // Hash new password and update
-    const newHash = await userRepository.hashPassword(newPassword);
-    await getPool().query(
-      'UPDATE users SET password_hash = $1 WHERE id = $2',
-      [newHash, tokenRow.user_id]
-    );
+      // Password policy
+      const policyResult = validatePassword(newPassword, defaultPasswordPolicy);
+      if (!policyResult.valid) {
+        throw new AppError(policyResult.errors.join('; '), 400);
+      }
 
-    // Mark token as used so it can't be replayed
-    await authRepository.markVerificationTokenUsed(tokenHash);
+      // Hash new password and update atomically
+      const newHash = await userRepository.hashPassword(newPassword);
+      await client.query(
+        'UPDATE users SET password_hash = $1 WHERE id = $2',
+        [newHash, tokenRow.user_id]
+      );
 
-    // Revoke all existing refresh tokens (force re-login everywhere)
-    await authRepository.revokeAllUserRefreshTokens(tokenRow.user_id);
-    await authRepository.revokeAllUserSessions(tokenRow.user_id);
+      // Mark token as used so it can't be replayed
+      await client.query('UPDATE verification_tokens SET used_at = NOW() WHERE id = $1', [tokenRow.id]);
+
+      // Revoke all existing refresh tokens (force re-login everywhere)
+      await client.query('DELETE FROM refresh_tokens WHERE user_id = $1', [tokenRow.user_id]);
+      await client.query('DELETE FROM user_sessions WHERE user_id = $1', [tokenRow.user_id]);
+    });
   }
 
   // ── Change password ───────────────────────────────────────────────────────
@@ -817,19 +841,17 @@ export class AuthService {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  private issueTokens(userId: number, email: string, sessionId?: number): AuthTokens {
+  private async issueTokens(userId: number, email: string, sessionId?: number): Promise<AuthTokens> {
     const accessToken = generateAccessToken(userId, email, sessionId);
     const refreshToken = generateRefreshToken(userId, email);
     const expiresIn = config.jwt.expiresIn;
 
-    // Persist refresh token hash (fire-and-forget — don't block token issuance).
-    // Errors are logged but never surface to the client; a missing DB row for a
-    // still-valid JWT is a recoverable inconsistency handled by cleanup jobs.
+    // Persist refresh token hash synchronously — MUST succeed before returning
+    // tokens. A missing DB row for a still-valid JWT would cause a false
+    // reuse-detection cascade on the next /refresh call, revoking all sessions.
     const tokenHash = hashToken(refreshToken);
     const tokenExpiry = new Date(Date.now() + 30 * 24 * 3600_000).toISOString();
-    authRepository
-      .createRefreshToken(userId, tokenHash, sessionId ?? null, null, null, tokenExpiry)
-      .catch((err) => logger.warn('Failed to persist refresh token:', err));
+    await authRepository.createRefreshToken(userId, tokenHash, sessionId ?? null, null, null, tokenExpiry);
 
     return { accessToken, refreshToken, expiresIn };
   }
