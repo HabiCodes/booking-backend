@@ -22,6 +22,10 @@ export class MoviePriceCapService {
     return moviePriceCapRepository.findByOrganization(organizationId, query);
   }
 
+  async findAll(query?: { page?: number; pageSize?: number }): Promise<PaginatedResult<MoviePriceCapPublic>> {
+    return moviePriceCapRepository.findAll(query);
+  }
+
   async create(input: Partial<MoviePriceCapCreateInput> & { organization_id?: number }): Promise<MoviePriceCapRow> {
     return moviePriceCapRepository.create(input as MoviePriceCapCreateInput & { organization_id?: number });
   }

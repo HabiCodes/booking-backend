@@ -89,6 +89,19 @@ export class MovieRepository {
     return { items: rows.map(toPublic), total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
   }
 
+  async findAll(page: number = 1, pageSize: number = 25): Promise<PaginatedResult<MoviePublic>> {
+    const offset = (page - 1) * pageSize;
+    const { rows: countRows } = await getPool().query(
+      'SELECT COUNT(*) as total FROM movies WHERE deleted_at IS NULL'
+    );
+    const total = Number((countRows as Array<{ total: number | string }>)[0]?.total ?? 0);
+    const { rows } = await getPool().query(
+      'SELECT * FROM movies WHERE deleted_at IS NULL ORDER BY release_date DESC NULLS LAST, created_at DESC LIMIT $1 OFFSET $2',
+      [pageSize, offset]
+    );
+    return { items: rows.map(toPublic), total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
+  }
+
   async findNowShowing(query: { page?: number; pageSize?: number; city?: string } = {}): Promise<PaginatedResult<MoviePublic>> {
     const page = query.page || 1;
     const pageSize = Math.min(query.pageSize || 25, 100);

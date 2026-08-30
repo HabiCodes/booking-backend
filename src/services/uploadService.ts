@@ -7,13 +7,26 @@ import { fileUploadRepository } from '../repositories/fileUploadRepository';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 import { getImageDimensions } from '../utils/imageDimensions';
+import {
+  getStorageBackend,
+  generateStorageKey,
+  extensionForMime,
+  buildMediaUrl,
+} from '../infrastructure/mediaStorage';
+import { isS3Configured } from '../infrastructure/s3Client';
 
 const ALLOWED_MIME_TYPES = new Set(config.uploads.allowedMimeTypes);
 
 /**
- * Ensure the upload directory tree exists. Called once at startup.
+ * Ensure upload directory tree exists. Called once at startup.
+ * No-op when S3 is configured (no local dirs needed).
  */
 export function ensureUploadDirs(): void {
+  if (isS3Configured()) {
+    logger.info('Upload dirs: skipped — S3 configured');
+    return;
+  }
+
   const base = path.resolve(config.uploads.baseDir);
   for (const dir of Object.values(config.uploads.directories)) {
     const full = path.join(base, dir);
@@ -107,7 +120,7 @@ function validateImage(
 }
 
 /**
- * Save an uploaded image buffer to disk and record it in the ledger.
+ * Save an uploaded image buffer to storage (S3 or local) and record in the ledger.
  *
  * @param buf          Raw file bytes
  * @param subdir       One of config.uploads.directories keys
@@ -117,31 +130,26 @@ function validateImage(
  */
 export async function saveUpload(
   buf: Buffer,
-  subdir: 'events' | 'banners' | 'tickets',
+  subdir: 'events' | 'banners' | 'tickets' | 'movies' | 'turf',
   maxBytes: number,
   options: { minWidth?: number; minHeight?: number } = {},
-  uploadedBy: number | null = null
+  uploadedBy: number | null = null,
+  organizationId: number | null = null
 ): Promise<SavedFile> {
   const { mimeType, width, height } = validateImage(buf, ALLOWED_MIME_TYPES, maxBytes, options);
 
-  const ext = mimeType === 'image/png' ? '.png'
-    : mimeType === 'image/webp' ? '.webp'
-    : '.jpg';
+  const storage = getStorageBackend();
+  const ext = extensionForMime(mimeType);
+  const key = generateStorageKey(subdir, mimeType);
 
-  const storedName = `${crypto.randomUUID()}${ext}`;
-  const dir = path.resolve(config.uploads.baseDir, config.uploads.directories[subdir]);
-
-  fs.mkdirSync(dir, { recursive: true });
-  const fullPath = path.join(dir, storedName);
-  fs.writeFileSync(fullPath, buf);
-
-  const relativePath = path.join(config.uploads.directories[subdir], storedName);
-  const url = `/uploads/${relativePath.replace(/\\/g, '/')}`;
+  // Store via abstraction (S3 or local)
+  const result = await storage.put(key, buf, mimeType);
+  const url = buildMediaUrl(result.key);
 
   // Record in ledger (best-effort)
   const record = await fileUploadRepository.createFileUpload(getPool(), {
-    originalName: storedName,
-    storedName: relativePath,
+    originalName: path.basename(result.key),
+    storedName: result.key,
     mimeType,
     sizeBytes: buf.length,
     width,
@@ -155,8 +163,16 @@ export async function saveUpload(
   });
 
   logger.info(
-    `Saved upload: ${mimeType} ${width}x${height} ${buf.length}B → ${relativePath} (ledger#${record?.id ?? '?'})`
+    `Saved upload: ${mimeType} ${width}x${height} ${buf.length}B → ${result.key} (ledger#${record?.id ?? '?'})`
   );
 
-  return { storedName, mimeType, sizeBytes: buf.length, width, height, fullPath, url };
+  return {
+    storedName: result.key,
+    mimeType,
+    sizeBytes: buf.length,
+    width,
+    height,
+    fullPath: result.key,
+    url,
+  };
 }

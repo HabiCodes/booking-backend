@@ -77,6 +77,9 @@ for i = 1, count do
   redis.call('SADD', key, ARGV[i + 1])
 end
 
+-- Set TTL on the tracking set so checkHold and stale-cleanup can detect expiry
+redis.call('EXPIRE', key, ttl)
+
 return { 1 }
 `;
 
@@ -335,69 +338,74 @@ export class MovieBookingService {
       );
       const booking = bookingResult.rows[0] as MovieBookingRow;
 
-      const bookingItems: MovieBookingItemRow[] = [];
-      try {
-        for (let i = 0; i < seats.length; i++) {
-          const seat = seats[i];
+      const bookingItems = await movieBookingItemRepository.bulkCreate(
+        seats.map(seat => {
           const priceInfo = seatPrices.find(p => p.seatId === seat.id)!;
-          const itemResult = await client.query(
-            `INSERT INTO movie_booking_items
-              (booking_id, showtime_id, seat_id, seat_label, row_label, seat_number, seat_type, seat_category, price, currency)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-             RETURNING *`,
-            [
-              booking.id, showtimeId, seat.id,
-              `${seat.row_label}${seat.seat_number}`, seat.row_label, seat.seat_number,
-              seat.seat_type, seat.seat_category, priceInfo.finalPricePaise, 'INR',
-            ]
-          );
-          bookingItems.push(itemResult.rows[0] as MovieBookingItemRow);
-        }
-      } catch (err: unknown) {
-        // Postgres unique violation on partial unique index
-        // idx_movie_booking_items_seat_showtime_active (race vs another booking).
-        // Index predicate (set by migration 038) is:
-        //   WHERE booking_status IN ('pending_payment', 'confirmed')
-        // Roll back the transaction (handled by withTransaction) so the
-        // booking row is also discarded.
-        const pgErr = err as { code?: string };
-        if (pgErr && pgErr.code === '23505') {
-          throw new AppError('One or more seats were just booked by another user — please try again', 409);
-        }
-        throw err;
-      }
-
-      // Decrement available seats
-      await client.query(
-        'UPDATE showtimes SET available_seats = available_seats - $1, booked_seats = booked_seats + $1, updated_at = NOW() WHERE id = $2',
-        [seatIds.length, showtimeId]
+          return {
+            booking_id: booking.id, showtime_id: showtimeId, seat_id: seat.id,
+            seat_label: `${seat.row_label}${seat.seat_number}`, row_label: seat.row_label, seat_number: seat.seat_number,
+            seat_type: seat.seat_type, seat_category: seat.seat_category,
+            price: priceInfo.finalPricePaise, currency: 'INR',
+          };
+        }),
+        client
       );
+
+      // Decrement available seats (with sold_out transition)
+      await showtimeRepository.updateAvailableSeats(showtimeId, -seatIds.length, client);
 
       return { booking };
     });
 
-    // Post-commit: Create payment order
+    // Post-commit: Create payment order (this MUST succeed — if it fails, cancel the booking
+    // and release seats so the user can retry. A dangling pending_payment booking with no
+    // payment order is worse than a failed attempt.)
     const orderId = `MOV_${Date.now()}_${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    let paymentResult: { order: { order_id: string }; paymentSessionId: string } | null = null;
+    try {
+      const paymentService = getPaymentService();
+      const financialSnapshot: FinancialSnapshot | null = totalAmountPaiseBreakdown
+        ? PricingEngine.toSnapshot(totalAmountPaiseBreakdown, 'online')
+        : null;
+      paymentResult = await paymentService.createOrder({
+        booking_id: booking.id,
+        order_id: orderId,
+        amount: totalAmount,
+        currency: 'INR',
+        customerEmail: input.customerEmail,
+        customerPhone: input.customerPhone,
+        customerName: input.customerName,
+        orderId: orderId,
+        organization_id: cinema.organization_id ?? 0,
+        movie_id: showtime.movie_id,
+        idempotency_key: `movie_pay_${booking.id}`,
+        financial_snapshot: financialSnapshot as { [key: string]: unknown } | null,
+      });
+    } catch (err) {
+      // Payment order creation failed — cancel the booking to release seats
+      logger.error('[MovieBooking] Payment order creation failed — cancelling booking', {
+        bookingId: booking.id,
+        bookingReference: booking.booking_reference,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      try {
+        await this.cancelBooking(booking.id, userId, 'Payment system unavailable — please retry', {
+          actorId: userId,
+          actorType: 'system',
+        });
+      } catch (cancelErr) {
+        logger.error('[MovieBooking] Failed to cancel booking after payment order failure', {
+          bookingId: booking.id,
+          error: cancelErr instanceof Error ? cancelErr.message : String(cancelErr),
+        });
+      }
+      throw new AppError('Payment system temporarily unavailable. Please try again in a moment.', 503);
+    }
 
-    // Post-commit: Create payment order via payment provider
-    const paymentService = getPaymentService();
-    const financialSnapshot: FinancialSnapshot | null = totalAmountPaiseBreakdown
-      ? PricingEngine.toSnapshot(totalAmountPaiseBreakdown, 'online')
-      : null;
-    const paymentResult = await paymentService.createOrder({
-      booking_id: booking.id,
-      order_id: orderId,
-      amount: totalAmount,
-      currency: 'INR',
-      customerEmail: input.customerEmail,
-      customerPhone: input.customerPhone,
-      customerName: input.customerName,
-      orderId: orderId,
-      organization_id: cinema.organization_id ?? 0,
-      movie_id: showtime.movie_id,
-      idempotency_key: `movie_pay_${booking.id}`,
-      financial_snapshot: financialSnapshot as { [key: string]: unknown } | null,
-    });
+    if (!paymentResult) {
+      // Defensive: should never reach here since throw above handles null
+      throw new AppError('Payment order creation failed', 500);
+    }
 
     // Cache idempotency
     await getRedis().set(`movie:idempotency:${idempotencyKey}`, JSON.stringify({ bookingId: booking.id }), 'EX', PAYMENT_TIMEOUT_SECONDS + 60);
@@ -454,11 +462,31 @@ export class MovieBookingService {
         throw new AppError(`Booking is in status: ${booking.status}`, 400);
       }
 
-      // Verify payment is captured
-      const paymentOrder = await paymentOrderRepository.findByBookingId(bookingId);
-      if (!paymentOrder || paymentOrder.status !== 'COMPLETED') {
+      // Verify payment is captured. If not yet captured, poll the gateway once
+      // so the customer returning from payment can get an immediate confirmation
+      // instead of waiting for the webhook.
+      let paymentOrder = await paymentOrderRepository.findByBookingId(bookingId);
+      if (!paymentOrder) {
         await client.query('ROLLBACK');
-        throw new AppError('Payment not confirmed for this booking', 409);
+        throw new AppError('Payment order not found for this booking', 409);
+      }
+
+      if (paymentOrder.status !== 'COMPLETED') {
+        if (paymentOrder.status === 'ACTIVE' || paymentOrder.status === 'CREATED') {
+          try {
+            const paymentService = getPaymentService();
+            paymentOrder = await paymentService.verifyPayment(paymentOrder.order_id);
+          } catch (verifyErr) {
+            logger.warn('[MovieBooking] Payment verification poll failed', {
+              bookingId, orderId: paymentOrder.order_id, error: verifyErr instanceof Error ? verifyErr.message : String(verifyErr),
+            });
+          }
+        }
+
+        if (!paymentOrder || paymentOrder.status !== 'COMPLETED') {
+          await client.query('ROLLBACK');
+          throw new AppError('Payment not confirmed for this booking', 409);
+        }
       }
 
       // Verify payment amount matches server-calculated amount
@@ -475,13 +503,9 @@ export class MovieBookingService {
       // Generate tickets atomically inside the transaction
       // If ticket creation fails, the entire confirmation rolls back
       const items = await movieBookingItemRepository.findByBooking(bookingId);
-      const ticketUuids: string[] = [];
-
-      for (const item of items) {
+      const ticketData = items.map(item => {
         const ticketUuid = UniversalTicketService.generateTicketUuid('movie');
-        ticketUuids.push(ticketUuid);
         const signature = UniversalTicketService.sign({ domain: 'movie', ticketUuid, entityId: booking.showtime_id, startAt: '' });
-
         const qrData = JSON.stringify({
           ref: booking.booking_reference,
           ticket: ticketUuid,
@@ -490,8 +514,7 @@ export class MovieBookingService {
           showtime: booking.showtime_id,
           domain: 'movie',
         });
-
-        await movieTicketRepository.create({
+        return {
           booking_id: booking.id,
           booking_item_id: item.id,
           ticket_uuid: ticketUuid,
@@ -502,8 +525,9 @@ export class MovieBookingService {
           seat_type: item.seat_type,
           qr_data: qrData,
           signature,
-        });
-      }
+        };
+      });
+      await movieTicketRepository.bulkCreate(ticketData, client);
 
       await client.query('COMMIT');
 
@@ -621,6 +645,8 @@ export class MovieBookingService {
 
   /**
    * Worker: expire stale pending_payment bookings and release seats.
+   * Uses withTransaction for each booking — connection is properly acquired
+   * and released per booking instead of being left open between iterations.
    */
   async expireStaleBookings(): Promise<number> {
     const cutoff = new Date(Date.now() - PAYMENT_TIMEOUT_SECONDS * 1000).toISOString();
@@ -629,13 +655,9 @@ export class MovieBookingService {
     let releasedCount = 0;
     for (const booking of expiredBookings) {
       try {
-        const pool = getPool();
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-
+        await withTransaction(async (client) => {
           const items = await movieBookingItemRepository.findByBooking(booking.id);
-          await showtimeRepository.updateAvailableSeats(booking.showtime_id, items.length);
+          await showtimeRepository.updateAvailableSeats(booking.showtime_id, items.length, client);
 
           // Release Redis holds
           const holdKey = `movie:hold:${booking.showtime_id}`;
@@ -646,15 +668,8 @@ export class MovieBookingService {
           if (booking.idempotency_key) {
             await getRedis().del(`movie:idempotency:${booking.idempotency_key}`);
           }
-
-          await client.query('COMMIT');
-          releasedCount++;
-        } catch (err) {
-          await client.query('ROLLBACK');
-          throw err;
-        } finally {
-          client.release();
-        }
+        });
+        releasedCount++;
       } catch (err) {
         logger.error(`[MovieWorker] Failed to expire booking ${booking.id}:`, err);
       }

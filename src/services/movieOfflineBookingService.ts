@@ -45,7 +45,7 @@ import type {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const MAX_SEATS_PER_OFFLINE_BOOKING = 20;
+const MAX_SEATS_PER_OFFLINE_BOOKING = 10;
 const OFFLINE_REFERENCE_PREFIX = 'OFMOV';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

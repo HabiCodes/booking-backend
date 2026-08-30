@@ -73,6 +73,19 @@ export class MoviePriceCapRepository {
     return { items: rows as unknown as MoviePriceCapPublic[], total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
   }
 
+  async findAll(query: { page?: number; pageSize?: number } = {}): Promise<PaginatedResult<MoviePriceCapPublic>> {
+    const page = query.page || 1;
+    const pageSize = Math.min(query.pageSize || 25, 100);
+    const offset = (page - 1) * pageSize;
+    const { rows: countRows } = await getPool().query('SELECT COUNT(*) as total FROM movie_price_caps');
+    const total = Number((countRows as Array<{ total: number | string }>)[0]?.total ?? 0);
+    const { rows } = await getPool().query(
+      'SELECT * FROM movie_price_caps ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+      [pageSize, offset]
+    );
+    return { items: rows as unknown as MoviePriceCapPublic[], total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
+  }
+
   async create(input: MoviePriceCapCreateInput & { organization_id?: number }): Promise<MoviePriceCapRow> {
     const { rows } = await getPool().query(
       `INSERT INTO movie_price_caps (organization_id, city, state, max_price_paise, currency, applies_to, is_active, notes)

@@ -18,7 +18,7 @@ type QueryExecutor = Pool | PoolClient;
 // ── Column lists ─────────────────────────────────────────────────────────────
 
 const MEDIA_COLUMNS = `
-  id, uploaded_by, storage_provider, storage_key,
+  id, uploaded_by, uploaded_by_role, organization_id, storage_provider, storage_key,
   file_name, mime_type, byte_size, sha256_hash,
   width, height,
   duration_seconds, video_provider, thumbnail_media_id,
@@ -38,6 +38,7 @@ const MEDIA_PUBLIC_COLUMNS = `
   duration_seconds, video_provider,
   public_url,
   blur_hash, dominant_color, alt_text, is_public,
+  organization_id, uploaded_by_role,
   created_at
 `;
 
@@ -50,12 +51,16 @@ export class MediaRepository {
     const executor = exec ?? getPool();
     const { rows } = await executor.query(
       `INSERT INTO media
-         (storage_provider, storage_key, file_name, mime_type, byte_size,
-          sha256_hash, width, height, duration_seconds, video_provider,
-          public_url, blur_hash, dominant_color, alt_text, is_public)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         (uploaded_by, uploaded_by_role, organization_id, storage_provider, storage_key,
+          file_name, mime_type, byte_size, sha256_hash, width, height,
+          duration_seconds, video_provider, public_url, blur_hash, dominant_color,
+          alt_text, is_public)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING ${MEDIA_COLUMNS}`,
       [
+        input.uploaded_by ?? null,
+        input.uploaded_by_role ?? null,
+        input.organization_id ?? null,
         input.storage_provider ?? 'local',
         input.storage_key,
         input.file_name,
@@ -157,6 +162,21 @@ export class MediaRepository {
     return (rows as unknown as MediaRow[])[0] || null;
   }
 
+  /**
+   * Find a media record by its storage key (S3 object key or local path).
+   * Used by the media proxy to authorize access.
+   * Returns BOTH active and soft-deleted records so the caller can decide
+   * what to do (the proxy returns 404 for deleted ones).
+   */
+  async findByStorageKey(storageKey: string): Promise<MediaRow | null> {
+    const { rows } = await getPool().query(
+      `SELECT ${MEDIA_COLUMNS} FROM media
+       WHERE storage_key = $1 LIMIT 1`,
+      [storageKey]
+    );
+    return (rows as unknown as MediaRow[])[0] || null;
+  }
+
   async list(query: MediaListQuery): Promise<MediaListResult> {
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -172,6 +192,10 @@ export class MediaRepository {
     if (query.is_public !== undefined) {
       params.push(query.is_public);
       conditions.push(`is_public = $${idx++}`);
+    }
+    if (query.organization_id !== undefined) {
+      params.push(query.organization_id);
+      conditions.push(`organization_id = $${idx++}`);
     }
     if (query.fromDate) {
       params.push(query.fromDate);

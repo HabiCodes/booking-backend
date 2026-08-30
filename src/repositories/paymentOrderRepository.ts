@@ -12,6 +12,7 @@
 
 import { getPool } from '../db/pool';
 import { PoolClient } from 'pg';
+import { logger } from '../utils/logger';
 import type {
   PaymentOrderRow,
   PaymentOrderPublic,
@@ -97,17 +98,71 @@ export class PaymentOrderRepository {
     return (rows as unknown as PaymentOrderRow[])[0] || null;
   }
 
+  async updateStatusGuarded(id: number, status: PaymentOrderStatus, extra: Record<string, unknown> = {}, client?: PoolClient): Promise<PaymentOrderRow | null> {
+    const pool = client ?? getPool();
+    const TERMINAL = ['COMPLETED', 'REFUNDED', 'PARTIALLY_REFUNDED'] as const;
+    const sets: string[] = ['status = $1', 'updated_at = NOW()'];
+    const params: unknown[] = [status];
+    let idx = 2;
+    for (const [key, value] of Object.entries(extra)) {
+      if (value !== undefined) {
+        sets.push(`${key} = $${idx++}`);
+        params.push(value);
+      }
+    }
+    // Only update if the order is NOT already in a terminal state
+    // This prevents stale webhooks from downgrading COMPLETED → FAILED, etc.
+    const terminalPlaceholders = TERMINAL.map(() => `$${idx++}`).join(',');
+    const idPlaceholder = `$${idx++}`;
+    const { rows } = await pool.query(
+      `UPDATE payment_orders SET ${sets.join(', ')} WHERE id = ${idPlaceholder} AND status NOT IN (${terminalPlaceholders}) RETURNING *`,
+      [...params, id, ...TERMINAL]
+    );
+    const result = (rows as unknown as PaymentOrderRow[])[0] || null;
+    if (!result) {
+      // Fetch current state to check if terminal (caller may need to know)
+      const current = await pool.query('SELECT status FROM payment_orders WHERE id = $1', [id]);
+      const currentStatus = current.rows[0]?.status;
+      if ((TERMINAL as readonly string[]).includes(currentStatus)) {
+        logger.warn('[Payment] Guarded status update blocked — order is terminal', { orderId: id, currentStatus, requestedStatus: status });
+      }
+    }
+    return result;
+  }
+
   async updateFromWebhook(orderId: string, data: Record<string, unknown>, client?: PoolClient): Promise<PaymentOrderRow | null> {
     const pool = client ?? getPool();
+    const TERMINAL = ['COMPLETED', 'REFUNDED', 'PARTIALLY_REFUNDED'] as const;
+    const sets: string[] = ['verified_at = NOW()', 'verified_by = \'webhook\'', 'retry_count = retry_count + 1', 'updated_at = NOW()'];
+    const params: unknown[] = [];
+    let idx = 1;
+
+    if (data.status != null) { sets.push(`status = $${++idx}`); params.push(data.status); }
+    if (data.provider_payment_id != null) { sets.push(`provider_payment_id = $${++idx}`); params.push(data.provider_payment_id); }
+    if (data.provider_authorization_id != null) { sets.push(`provider_authorization_id = $${++idx}`); params.push(data.provider_authorization_id); }
+    if (data.payment_method != null) { sets.push(`payment_method = $${++idx}`); params.push(data.payment_method); }
+    if (data.provider_session_id != null) { sets.push(`provider_session_id = $${++idx}`); params.push(data.provider_session_id); }
+    if (data.provider_order_token != null) { sets.push(`provider_order_token = $${++idx}`); params.push(data.provider_order_token); }
+    if (data.error_code != null) { sets.push(`error_code = $${++idx}`); params.push(data.error_code); }
+    if (data.error_message != null) { sets.push(`error_message = $${++idx}`); params.push(data.error_message); }
+
+    // GUARD: never overwrite a terminal (final) state.
+    // Prevents stale/duplicate webhooks from downgrading COMPLETED→FAILED.
+    const idParam = `$${++idx}`;
+    const terminalParams = TERMINAL.map((_t, i) => `$${++idx}`);
     const { rows } = await pool.query(
-      `UPDATE payment_orders SET status = COALESCE($1, status), provider_payment_id = COALESCE($2, provider_payment_id),
-              provider_authorization_id = COALESCE($3, provider_authorization_id), payment_method = COALESCE($4, payment_method),
-              error_code = COALESCE($5, error_code), error_message = COALESCE($6, error_message),
-              verified_at = NOW(), verified_by = 'webhook', retry_count = retry_count + 1, updated_at = NOW()
-       WHERE order_id = $7 RETURNING *`,
-      [data.status, data.provider_payment_id, data.provider_authorization_id, data.payment_method, data.error_code, data.error_message, orderId]
+      `UPDATE payment_orders SET ${sets.join(', ')} WHERE order_id = ${idParam} AND status NOT IN (${terminalParams.join(',')}) RETURNING *`,
+      [...params, orderId, ...TERMINAL]
     );
-    return (rows as unknown as PaymentOrderRow[])[0] || null;
+    const result = (rows as unknown as PaymentOrderRow[])[0] || null;
+    if (!result && pool === getPool()) {
+      const current = await getPool().query('SELECT status FROM payment_orders WHERE order_id = $1', [orderId]);
+      const currentStatus = current.rows[0]?.status;
+      if ((TERMINAL as readonly string[]).includes(currentStatus)) {
+        logger.warn('[Payment] Webhook status update blocked — order is terminal', { orderId, currentStatus });
+      }
+    }
+    return result;
   }
 
   async linkBooking(orderId: string, bookingId: number): Promise<void> {

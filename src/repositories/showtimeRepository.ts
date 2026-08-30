@@ -211,11 +211,26 @@ export class ShowtimeRepository {
     return (rows as unknown as ShowtimeRow[])[0] || null;
   }
 
-  async updateAvailableSeats(id: number, delta: number): Promise<void> {
-    await getPool().query(
-      'UPDATE showtimes SET available_seats = GREATEST(0, available_seats + $1), updated_at = NOW() WHERE id = $2',
+  async updateAvailableSeats(id: number, delta: number, client?: import('pg').PoolClient): Promise<void> {
+    const pool = client || getPool();
+    await pool.query(
+      `UPDATE showtimes SET available_seats = GREATEST(0, available_seats + $1), updated_at = NOW()
+       WHERE id = $2`,
       [delta, id]
     );
+    if (delta < 0) {
+      await pool.query(
+        `UPDATE showtimes SET status = 'sold_out', updated_at = NOW()
+         WHERE id = $1 AND available_seats <= 0 AND status = 'on_sale'`,
+        [id]
+      );
+    } else if (delta > 0) {
+      await pool.query(
+        `UPDATE showtimes SET status = 'on_sale', updated_at = NOW()
+         WHERE id = $1 AND available_seats > 0 AND status = 'sold_out'`,
+        [id]
+      );
+    }
   }
 
   async incrementBookedSeats(id: number, count: number): Promise<void> {

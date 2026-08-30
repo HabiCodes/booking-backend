@@ -74,8 +74,8 @@ export class MovieService {
 
     let items = result.items;
     if (query.status === 'ended') {
-      // Fetch ended movies via separate query
-      const allResult = await movieRepository.findByOrganization(0, { page, pageSize });
+      // Fetch ended movies from all organizations (no org filter on public endpoint)
+      const allResult = await movieRepository.findAll(page, pageSize);
       items = allResult.items.filter((m) => m.status === 'ended');
     } else if (query.status === 'coming_soon') {
       items = result.items.filter((m: MoviePublic) => m.status === 'coming_soon');
@@ -123,10 +123,10 @@ export class MovieService {
 
   // ── Admin ───────────────────────────────────────────────────────────────────
 
-  async listAdmin(query: { page?: number; pageSize?: number; search?: string; organizationId?: number } = {}): Promise<PaginatedResult<MoviePublic>> {
+  async listAdmin(query: { page?: number; pageSize?: number; search?: string; organizationId?: number | null } = {}): Promise<PaginatedResult<MoviePublic>> {
     const page = query.page || 1;
     const pageSize = Math.min(query.pageSize || 25, 100);
-    const organizationId = query.organizationId || 0;
+    const organizationId = query.organizationId ?? null; // null = super admin (all orgs)
 
     if (query.search) {
       const result = await movieRepository.search({
@@ -136,7 +136,14 @@ export class MovieService {
       return { items: result.items, total: result.total, page, pageSize, totalPages: Math.ceil(result.total / pageSize) || 1 };
     }
 
-    const result = await movieRepository.findByOrganization(organizationId, { page, pageSize });
+    let result: PaginatedResult<MoviePublic>;
+    if (organizationId === null) {
+      // Super admin: return all movies across all organizations
+      const all = await movieRepository.findAll(page, pageSize);
+      result = { items: all.items, total: all.total, page, pageSize, totalPages: all.totalPages };
+    } else {
+      result = await movieRepository.findByOrganization(organizationId, { page, pageSize });
+    }
     return { ...result, page, pageSize, totalPages: Math.ceil(result.total / pageSize) || 1 };
   }
 

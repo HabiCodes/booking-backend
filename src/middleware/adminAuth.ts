@@ -79,9 +79,10 @@ async function verifyPermissionsFreshness(adminId: number, tokenUpdatedAt?: stri
       'SELECT permissions_updated_at FROM admins WHERE id = $1 LIMIT 1',
       [adminId]
     );
-    const row = (rows as Array<{ permissions_updated_at: string }>)[0];
+    const row = (rows as Array<{ permissions_updated_at: Date }>)[0];
     if (!row) return false;
-    return row.permissions_updated_at <= tokenUpdatedAt;
+    const dbTimestamp = row.permissions_updated_at.toISOString();
+    return dbTimestamp <= tokenUpdatedAt;
   } catch {
     return false; // fail closed — DB error means we cannot verify freshness, deny access
   }

@@ -69,6 +69,18 @@ router.post('/payment', async (req: any, res: any, next: any): Promise<void> => 
       return res.status(404).json({ success: false, error: 'Payment order not found' });
     }
 
+    // 3b. Validate payment amount matches (prevent underpayment attacks)
+    const webhookAmount = Number((payloadData.amount as number | string | undefined) ?? (payloadData.payment_amount as number | string | undefined));
+    if (eventType === 'PAYMENT_SUCCESS' && webhookAmount > 0) {
+      const expectedAmount = Number(paymentOrder.amount);
+      if (webhookAmount < expectedAmount) {
+        logger.warn('[MovieWebhook] Amount mismatch — potential underpayment', {
+          orderId, webhookAmount, expectedAmount,
+        });
+        return res.status(400).json({ success: false, error: 'Payment amount does not match order' });
+      }
+    }
+
     // 4. Deterministic idempotency key
     const idempotencyKey = movieWebhookIdempotencyKey(orderId, eventType);
 

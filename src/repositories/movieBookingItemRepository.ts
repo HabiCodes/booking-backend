@@ -49,7 +49,8 @@ export class MovieBookingItemRepository {
       seat_category: string;
       price: number;
       currency: string;
-    }>
+    }>,
+    client?: import('pg').PoolClient
   ): Promise<MovieBookingItemRow[]> {
     if (items.length === 0) return [];
     const values: string[] = [];
@@ -63,7 +64,8 @@ export class MovieBookingItemRepository {
         item.price, item.currency
       );
     }
-    const { rows } = await getPool().query(
+    const pool = client || getPool();
+    const { rows } = await pool.query(
       `INSERT INTO movie_booking_items (booking_id, showtime_id, seat_id, seat_label, row_label, seat_number, seat_type, seat_category, price, currency)
        VALUES ${values.join(', ')} RETURNING *`,
       params

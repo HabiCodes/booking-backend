@@ -19,6 +19,8 @@
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 import { withTransaction, getPool } from '../db/pool';
+import { withTimeout } from '../utils/withTimeout';
+import { config } from '../config';
 import type { PaymentOrderRow, PaymentOrderStatus, PaymentOrderCreateInput, RefundRow, RefundCreateInput } from '../types';
 
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
@@ -27,6 +29,8 @@ import { webhookEventRepository } from '../repositories/webhookEventRepository';
 import { eventRepository } from '../repositories/eventRepository';
 import type { IPaymentGateway, PollPaymentResult } from './paymentGateway';
 import { PricingEngine } from './pricingEngine';
+
+const GATEWAY_TIMEOUT_MS = config.paymentProvider.gatewayTimeoutMs;
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -62,17 +66,21 @@ export class PaymentService {
     }
     if (!organizationId) throw new AppError('Organization not found', 400);
 
-    // 3) Create the gateway order
-    const gatewayResult = await this.gateway.createOrder({
-      bookingId: input.booking_id,
-      amount: input.amount,
-      currency: input.currency || 'INR',
-      orderId: input.orderId,
-      customerEmail: input.customerEmail,
-      customerPhone: input.customerPhone,
-      customerName: input.customerName,
-      metadata: { organization_id: organizationId, event_id: input.event_id, ...input.metadata },
-    });
+    // 3) Create the gateway order (with timeout to prevent hung connections from starving the pool)
+    const gatewayResult = await withTimeout(
+      this.gateway.createOrder({
+        bookingId: input.booking_id,
+        amount: input.amount,
+        currency: input.currency || 'INR',
+        orderId: input.orderId,
+        customerEmail: input.customerEmail,
+        customerPhone: input.customerPhone,
+        customerName: input.customerName,
+        metadata: { organization_id: organizationId, event_id: input.event_id, ...input.metadata },
+      }),
+      GATEWAY_TIMEOUT_MS,
+      'paymentGateway.createOrder',
+    );
 
     // 4) Persist to DB — include movie_id so booking_type resolves correctly
     const order = await paymentOrderRepository.create({
@@ -105,30 +113,92 @@ export class PaymentService {
   /**
    * Verify a payment — called after the user returns from the payment page
    * or when processing a webhook. Server-side verification is the source of truth.
+   *
+   * Concurrency safety:
+   *   - Wraps the gateway call + DB update in a transaction with
+   *     SELECT ... FOR UPDATE on the payment_orders row.
+   *   - This serializes concurrent verifyPayment + webhook delivery
+   *     for the same order. Whichever path gets the lock first commits
+   *     its terminal status; the other sees the new state when it
+   *     acquires the lock and short-circuits.
+   *   - updateFromWebhook has a terminal-state guard (NOT IN COMPLETED,
+   *     REFUNDED, PARTIALLY_REFUNDED) so a stale webhook cannot
+   *     downgrade a COMPLETED order.
    */
   async verifyPayment(orderId: string): Promise<PaymentOrderRow> {
-    const order = await paymentOrderRepository.findByOrderId(orderId);
-    if (!order) throw new AppError('Payment order not found', 404);
+    return withTransaction(async (client) => {
+      // 1. Lock the row — concurrent verifyPayment + webhook serialise here
+      const lockResult = await client.query(
+        `SELECT * FROM payment_orders WHERE order_id = $1 FOR UPDATE`,
+        [orderId]
+      );
+      const lockedOrder = lockResult.rows[0] as PaymentOrderRow | undefined;
+      if (!lockedOrder) throw new AppError('Payment order not found', 404);
 
-    const verifyResult = await this.gateway.verifyPayment(orderId, {});
+      // 2. Short-circuit if a concurrent path already produced a terminal result
+      const TERMINAL = ['COMPLETED', 'REFUNDED', 'PARTIALLY_REFUNDED'] as const;
+      if ((TERMINAL as readonly string[]).includes(lockedOrder.status)) {
+        logger.info('[Payment] verifyPayment short-circuit — order is already terminal', {
+          orderId,
+          status: lockedOrder.status,
+        });
+        return lockedOrder;
+      }
 
-    const updated = await paymentOrderRepository.updateFromWebhook(orderId, {
-      status: verifyResult.status,
-      provider_payment_id: verifyResult.paymentId || undefined,
-      payment_method: verifyResult.paymentMethod || undefined,
-      error_code: verifyResult.errorCode || undefined,
-      error_message: verifyResult.errorMessage || undefined,
+      // 3. Call the gateway (with timeout — hung gateway would starve the DB connection pool)
+      const verifyResult = await withTimeout(
+        this.gateway.verifyPayment(orderId, {}),
+        GATEWAY_TIMEOUT_MS,
+        'paymentGateway.verifyPayment',
+      );
+
+      // 4. Apply guarded update — terminal guard prevents downgrade
+      const updateResult = await client.query(
+        `UPDATE payment_orders SET status = $1, provider_payment_id = COALESCE($2, provider_payment_id),
+                payment_method = COALESCE($3, payment_method),
+                error_code = COALESCE($4, error_code), error_message = COALESCE($5, error_message),
+                verified_at = NOW(), verified_by = 'api_poll', retry_count = retry_count + 1,
+                updated_at = NOW()
+         WHERE order_id = $6 AND status NOT IN ($7, $8, $9)
+         RETURNING *`,
+        [
+          verifyResult.status,
+          verifyResult.paymentId || null,
+          verifyResult.paymentMethod || null,
+          verifyResult.errorCode || null,
+          verifyResult.errorMessage || null,
+          orderId,
+          'COMPLETED', 'REFUNDED', 'PARTIALLY_REFUNDED',
+        ]
+      );
+
+      const updated = (updateResult.rows as unknown as PaymentOrderRow[])[0];
+      if (!updated) {
+        // Re-read current state — likely a concurrent webhook finalised
+        // the order while we were calling the gateway
+        const current = await client.query(
+          `SELECT * FROM payment_orders WHERE order_id = $1`, [orderId]
+        );
+        const cur = (current.rows[0] as unknown as PaymentOrderRow);
+        if (cur) {
+          logger.info('[Payment] verifyPayment saw terminal state after gateway call — keeping existing', {
+            orderId,
+            currentStatus: cur.status,
+            verifiedStatus: verifyResult.status,
+          });
+          return cur;
+        }
+        throw new AppError('Failed to update payment order', 500);
+      }
+
+      if (verifyResult.status === 'COMPLETED') {
+        logger.info('Payment verified successfully', { orderId, paymentId: verifyResult.paymentId });
+      } else if (verifyResult.status === 'FAILED' || verifyResult.status === 'CANCELLED' || verifyResult.status === 'EXPIRED') {
+        logger.warn('Payment failed', { orderId, status: verifyResult.status });
+      }
+
+      return updated;
     });
-
-    if (!updated) throw new AppError('Failed to update payment order', 500);
-
-    if (verifyResult.status === 'COMPLETED') {
-      logger.info('Payment verified successfully', { orderId, paymentId: verifyResult.paymentId });
-    } else if (verifyResult.status === 'FAILED' || verifyResult.status === 'CANCELLED' || verifyResult.status === 'EXPIRED') {
-      logger.warn('Payment failed', { orderId, status: verifyResult.status });
-    }
-
-    return updated;
   }
 
   /**
@@ -219,14 +289,16 @@ export class PaymentService {
         );
       }
 
-      // 4. Call payment gateway (outside the critical section is fine — the DB
-      //    lock already prevents concurrent approval; if the gateway fails, the
-      //    transaction rolls back and no state changes)
-      const result = await this.gateway.createRefund({
-        orderId: order.order_id,
-        amount: Number(input.amount),
-        reason: input.reason ?? undefined,
-      });
+      // 4. Call payment gateway (with timeout — hung connection would hold DB lock indefinitely)
+      const result = await withTimeout(
+        this.gateway.createRefund({
+          orderId: order.order_id,
+          amount: Number(input.amount),
+          reason: input.reason ?? undefined,
+        }),
+        GATEWAY_TIMEOUT_MS,
+        'paymentGateway.createRefund',
+      );
 
       // 5. Persist refund record (uses the transaction client)
       const refund = await refundRepository.create({
@@ -262,7 +334,11 @@ export class PaymentService {
     const reconciled: PaymentOrderRow[] = [];
     for (const order of staleOrders) {
       try {
-        const pollResult = await this.gateway.pollPaymentStatus(order.order_id);
+        const pollResult = await withTimeout(
+          this.gateway.pollPaymentStatus(order.order_id),
+          GATEWAY_TIMEOUT_MS,
+          'paymentGateway.pollPaymentStatus',
+        );
         if (pollResult.status !== 'ACTIVE') {
           const updated = await paymentOrderRepository.updateFromWebhook(order.order_id, {
             status: pollResult.status,
@@ -270,8 +346,12 @@ export class PaymentService {
           });
           if (updated) reconciled.push(updated);
         }
-      } catch {
-        // Continue to next order
+      } catch (err) {
+        // Log but continue — individual order failures shouldn't block the batch
+        logger.warn('[Payment] reconcileStaleOrders poll failed', {
+          orderId: order.order_id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
     return reconciled;

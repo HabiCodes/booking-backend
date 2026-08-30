@@ -134,6 +134,8 @@ export const config = {
     returnUrl: process.env.PAYMENT_RETURN_URL || 'http://localhost:3001',
     /** Full webhook endpoint URL for the provider to call back */
     notifyUrl: process.env.PAYMENT_NOTIFY_URL || '',
+    /** Gateway call timeout (ms). Prevents hung connections from starving the pool. */
+    gatewayTimeoutMs: asInt(process.env.PAYMENT_GATEWAY_TIMEOUT_MS, 15_000),
   },
 
   // ── Redis ─────────────────────────────────────────────────────────────────────
@@ -179,6 +181,17 @@ export const config = {
     maxAttempts: asInt(process.env.OTP_MAX_ATTEMPTS, 5),
     /** Sweep interval for boot-time cleanup of expired pending registrations (minutes). */
     cleanupIntervalMinutes: asInt(process.env.OTP_CLEANUP_INTERVAL_MINUTES, 60),
+  },
+
+  // ── S3 Media Storage ────────────────────────────────────────────────────────
+  s3: {
+    bucket: process.env.S3_BUCKET || "",
+    region: process.env.S3_REGION || "us-east-1",
+    endpoint: process.env.S3_ENDPOINT || "https://s3.amazonaws.com",
+    accessKeyId: process.env.S3_ACCESS_KEY_ID || "",
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "",
+    forcePathStyle: /^(1|true|yes|on)$/i.test(process.env.S3_FORCE_PATH_STYLE || ""),
+    publicBaseUrl: process.env.PUBLIC_BASE_URL || "",
   },
 } as const;
 

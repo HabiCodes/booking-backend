@@ -92,7 +92,8 @@ export class MovieTicketRepository {
       signature: string;
       status?: string;
       metadata?: Record<string, unknown>;
-    }>
+    }>,
+    client?: import('pg').PoolClient
   ): Promise<MovieTicketRow[]> {
     if (tickets.length === 0) return [];
     const values: string[] = [];
@@ -106,7 +107,8 @@ export class MovieTicketRepository {
         t.qr_data, t.signature, t.status || 'valid', t.metadata || '{}'
       );
     }
-    const { rows } = await getPool().query(
+    const pool = client || getPool();
+    const { rows } = await pool.query(
       `INSERT INTO movie_tickets (booking_id, booking_item_id, ticket_uuid, showtime_id, seat_label, row_label, seat_number, seat_type, qr_data, signature, status, metadata)
        VALUES ${values.join(', ')} RETURNING *`,
       params

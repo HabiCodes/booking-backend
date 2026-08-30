@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import {
   listOrgMovies, getOrgMovie, createOrgMovie, updateOrgMovie, deleteOrgMovie,
+  uploadMoviePoster, uploadMovieBackdrop,
   listOrgCinemas, getOrgCinema, createOrgCinema, updateOrgCinema, deleteOrgCinema,
   listOrgScreens, getOrgScreen, createOrgScreen, updateOrgScreen, deleteOrgScreen,
   listOrgShowtimes, getOrgShowtime, createOrgShowtime, updateOrgShowtime, deleteOrgShowtime,
@@ -22,6 +23,7 @@ import {
 import { requireOrganizerPermission } from '../middleware/organizerPermissions';
 import { requireOwner, requireAnyPermission } from '../middleware/organizerPermissionMiddleware';
 import { organizerAuthMiddleware, type OrganizerRequest } from '../middleware/organizerAuth';
+import { jsonUploadMiddleware } from '../middleware/upload';
 import { layoutVersionService } from '../services/layoutVersionService';
 import { AppError } from '../middleware/errorHandler';
 
@@ -38,6 +40,22 @@ organizerMovieRouter.post('/movies', requireAnyPermission('organizer:movies:writ
 organizerMovieRouter.put('/movies/:id', requireAnyPermission('organizer:movies:write', 'organizer:movies:publish'), updateOrgMovie);
 organizerMovieRouter.patch('/movies/:id', requireAnyPermission('organizer:movies:write', 'organizer:movies:publish'), updateOrgMovie);
 organizerMovieRouter.delete('/movies/:id', requireOrganizerPermission('organizer:movies:delete'), deleteOrgMovie);
+
+// ── Movie Poster/Backdrop Upload ───────────────────────────────────────────────
+
+organizerMovieRouter.post(
+  '/movies/:id/upload-poster',
+  jsonUploadMiddleware,
+  requireAnyPermission('organizer:movies:write', 'organizer:movies:publish'),
+  uploadMoviePoster
+);
+
+organizerMovieRouter.post(
+  '/movies/:id/upload-backdrop',
+  jsonUploadMiddleware,
+  requireAnyPermission('organizer:movies:write', 'organizer:movies:publish'),
+  uploadMovieBackdrop
+);
 
 // ── Cinemas ───────────────────────────────────────────────────────────────────
 

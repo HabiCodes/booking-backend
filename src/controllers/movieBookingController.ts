@@ -27,7 +27,7 @@ export async function holdSeats(req: AuthRequest, res: Response, next: NextFunct
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ success: false, message: 'Authentication required' });
 
-    const showtimeId = parseInt(req.params.showtimeId, 10);
+    const showtimeId = parseInt(req.body?.showtimeId, 10);
     const seatIds: number[] = Array.isArray(req.body?.seatIds)
       ? (req.body.seatIds as unknown[]).map((n) => Number(n)).filter((n) => Number.isFinite(n))
       : [];

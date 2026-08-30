@@ -1,11 +1,16 @@
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import { config } from '../config';
 import { mediaRepository } from '../repositories/mediaRepository';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 import { getImageDimensions } from '../utils/imageDimensions';
+import {
+  getStorageBackend,
+  generateStorageKey,
+  extensionForMime,
+  buildMediaUrl,
+} from '../infrastructure/mediaStorage';
+import { isS3Configured } from '../infrastructure/s3Client';
 import type {
   EventMediaCreateInput,
   EventMediaRow,
@@ -79,7 +84,7 @@ export class MediaService {
     options: {
       mimeType: string;
       fileName: string;
-      subdir?: 'events' | 'banners' | 'tickets';
+      subdir?: 'events' | 'banners' | 'tickets' | 'movies' | 'turf';
       width?: number | null;
       height?: number | null;
       durationSeconds?: number | null;
@@ -89,6 +94,8 @@ export class MediaService {
       altText?: string | null;
       isPublic?: boolean;
       uploadedBy?: number | null;
+      uploadedByRole?: string | null;
+      organizationId?: number | null;
     }
   ): Promise<MediaPublic> {
     validateMimeType(options.mimeType);
@@ -117,13 +124,19 @@ export class MediaService {
       return this.toPublic(existing);
     }
 
-    // Save to disk
+    // Save to storage (S3 or local via abstraction)
     const subdir = options.subdir ?? 'events';
-    const { storageKey, url } = this.saveToDiskSync(buf, options.mimeType, subdir);
+    const key = generateStorageKey(subdir, options.mimeType);
+    const result = await getStorageBackend().put(key, buf, options.mimeType);
+    const storageKey = result.key;
+    const url = buildMediaUrl(result.key);
 
     // Create media record
     const media = await mediaRepository.create(undefined, {
-      storage_provider: 'local',
+      uploaded_by: options.uploadedBy ?? null,
+      uploaded_by_role: options.uploadedByRole ?? null,
+      organization_id: options.organizationId ?? null,
+      storage_provider: isS3Configured() ? 's3' : 'local',
       storage_key: storageKey,
       file_name: options.fileName,
       mime_type: options.mimeType,
@@ -168,12 +181,23 @@ export class MediaService {
     return row ? this.toPublic(row) : null;
   }
 
-  async deleteMedia(id: number, hard = false): Promise<boolean> {
-    if (hard) {
-      const res = await mediaRepository.listEventMedia(id); // no-op, avoid direct pool access
-      // Use repository's soft delete by default — hard delete requires explicit confirmation
-      return mediaRepository.softDelete(id);
+  async deleteMedia(id: number, _hard = false): Promise<boolean> {
+    // Look up the media record to get the storage key for S3 cleanup
+    const media = await mediaRepository.findByIdOrDeleted(id);
+    if (!media) return false;
+
+    // Delete from S3/local storage (best-effort, don't fail DB delete)
+    try {
+      await getStorageBackend().delete(media.storage_key);
+      logger.info(`Media storage object deleted: ${media.storage_key}`);
+    } catch (err) {
+      logger.warn(`Failed to delete storage object for media ${id}`, {
+        key: media.storage_key,
+        error: (err as Error).message,
+      });
     }
+
+    // Soft-delete the DB record
     return mediaRepository.softDelete(id);
   }
 
@@ -272,40 +296,6 @@ export class MediaService {
     } as MediaPublic;
   }
 
-  /**
-   * Save buffer to disk synchronously (crash-safe: write to .tmp then atomic rename).
-   */
-  private saveToDiskSync(buf: Buffer, mimeType: string, subdir: string): { storageKey: string; url: string } {
-    const ext = this.extensionForMime(mimeType);
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const randomPart = crypto.randomBytes(8).toString('hex');
-    const relativePath = `${stamp}/${randomPart}${ext}`;
-
-    const uploadBase = config.uploads?.baseDir ?? path.resolve('uploads');
-    const dir = path.join(uploadBase, subdir);
-
-    fs.mkdirSync(dir, { recursive: true });
-
-    // Atomic write: tmp → rename (rename is atomic on the same filesystem)
-    const tmpPath = path.join(dir, `.tmp-${randomPart}${ext}`);
-    const finalPath = path.join(dir, relativePath);
-    fs.writeFileSync(tmpPath, buf);
-    fs.renameSync(tmpPath, finalPath);
-
-    const url = `/${subdir}/${relativePath}`.replace(/\\/g, '/');
-    return { storageKey: relativePath, url };
-  }
-
-  private extensionForMime(mimeType: string): string {
-    switch (mimeType) {
-      case 'image/png': return '.png';
-      case 'image/webp': return '.webp';
-      case 'image/gif': return '.gif';
-      case 'video/mp4': return '.mp4';
-      case 'video/webm': return '.webm';
-      default: return '.bin';
-    }
-  }
 }
 
 export const mediaService = new MediaService();

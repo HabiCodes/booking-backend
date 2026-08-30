@@ -6,13 +6,37 @@ import { getPool } from '../db/pool';
 import type { WebhookEventRow, WebhookEventPublic } from '../types';
 
 export class WebhookEventRepository {
+  /**
+   * Atomically create a webhook event record.
+   *
+   * Uses INSERT ... ON CONFLICT DO NOTHING to guarantee idempotency
+   * under concurrent webhook delivery.  If the same idempotency_key
+   * arrives twice simultaneously, only one INSERT succeeds — the
+   * other returns zero rows, and the caller should treat that as
+   * "already recorded".
+   *
+   * Returns the row (new or existing) so callers always get the record.
+   */
   async create(eventType: string, idempotencyKey: string, rawPayload: Record<string, unknown>, relatedOrderId?: string): Promise<WebhookEventRow> {
+    // Try atomic insert first — handles concurrent delivery safely
     const { rows } = await getPool().query(
       `INSERT INTO webhook_events (event_type, event_id, idempotency_key, raw_payload, related_order_id)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING *`,
       [eventType, relatedOrderId || ((rawPayload.data as Record<string, unknown> | undefined)?.order_id as string | undefined) || '', idempotencyKey, JSON.stringify(rawPayload), relatedOrderId || null]
     );
-    return rows[0] as unknown as WebhookEventRow;
+    if (rows.length > 0) {
+      return rows[0] as unknown as WebhookEventRow;
+    }
+    // Concurrent insert happened first — fetch the existing record
+    const existing = await this.findByIdempotencyKey(idempotencyKey);
+    if (!existing) {
+      // Extremely unlikely: ON CONFLICT didn't insert but no row found
+      // Retry once as a safety net
+      return this.create(eventType, idempotencyKey, rawPayload, relatedOrderId);
+    }
+    return existing;
   }
 
   async findByIdempotencyKey(key: string): Promise<WebhookEventRow | null> {

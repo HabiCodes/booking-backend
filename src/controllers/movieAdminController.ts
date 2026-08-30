@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { movieService } from '../services/movieService';
 import { cinemaService } from '../services/cinemaService';
+import { cinemaScreenRepository } from '../repositories/cinemaScreenRepository';
 import { showtimeService } from '../services/showtimeService';
 import { moviePriceCapService } from '../services/moviePriceCapService';
 import type { AdminRequest } from '../middleware/adminAuth';
@@ -11,7 +12,11 @@ export async function listAdminMovies(req: AdminRequest, res: Response, next: Ne
   try {
     const page = req.query.page ? Number(req.query.page) : 1;
     const pageSize = Math.min(req.query.pageSize ? Number(req.query.pageSize) : 25, 100);
-    const result = await movieService.listAdmin({ page, pageSize, search: req.query.search as string | undefined });
+    const result = await movieService.listAdmin({
+      page, pageSize,
+      search: req.query.search as string | undefined,
+      organizationId: req.admin?.organizationId ?? null,
+    });
     res.json({ success: true, data: result.items, pagination: { total: result.total, page: result.page, pageSize: result.pageSize, totalPages: result.totalPages } });
   } catch (err) {
     return next(err);
@@ -156,12 +161,11 @@ export async function deleteScreen(req: AdminRequest, res: Response, next: NextF
 export async function getScreenWithLayout(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const screenId = parseInt(req.params.screenId, 10);
-    const screen = await cinemaService.getScreens(parseInt(req.params.cinemaId, 10));
-    const found = screen.find((s) => s.id === screenId);
-    if (!found) return res.status(404).json({ success: false, message: 'Screen not found' });
+    const screen = await cinemaScreenRepository.findById(screenId);
+    if (!screen) return res.status(404).json({ success: false, message: 'Screen not found' });
     const layout = await cinemaService.getScreenCurrentLayout(screenId);
     const versions = await cinemaService.getScreenLayoutVersions(screenId);
-    return res.json({ success: true, data: { screen: found, currentLayout: layout, versions } });
+    return res.json({ success: true, data: { screen, currentLayout: layout, versions } });
   } catch (err) {
     return next(err);
   }
@@ -289,10 +293,16 @@ export async function getShowtimeSummary(req: AdminRequest, res: Response, next:
 
 export async function listPriceCaps(req: AdminRequest, res: Response, next: NextFunction) {
   try {
-    const organizationId = req.admin?.organizationId ?? 0;
     const page = req.query.page ? Number(req.query.page) : 1;
     const pageSize = Math.min(req.query.pageSize ? Number(req.query.pageSize) : 25, 100);
-    const result = await moviePriceCapService.findByOrganization(organizationId, { page, pageSize });
+    const orgId = req.admin?.organizationId;
+
+    // Super-admin (orgId=null) sees all price caps across organizations.
+    // Org-scoped admin sees only their organization's caps.
+    const result = orgId != null
+      ? await moviePriceCapService.findByOrganization(orgId, { page, pageSize })
+      : await moviePriceCapService.findAll({ page, pageSize });
+
     res.json({ success: true, data: result.items, pagination: { total: result.total, page: result.page, pageSize: result.pageSize, totalPages: result.totalPages } });
   } catch (err) {
     return next(err);

@@ -167,6 +167,22 @@ export function validateEnv(): EnvValidationResult {
     );
   }
 
+  // S3 configuration sanity — warn if partially configured (leads to runtime failures).
+  // Either all S3 vars are set (using S3) or none are (using local filesystem).
+  const s3Vars = ['S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'];
+  const s3Set = s3Vars.filter((k) => process.env[k]?.trim());
+  if (s3Set.length > 0 && s3Set.length < s3Vars.length) {
+    if (isProd) {
+      errors.push(
+        `S3 is partially configured (${s3Set.join(', ')} set). Set ALL of ${s3Vars.join(', ')} or remove all of them to use local storage.`
+      );
+    } else {
+      warnings.push(
+        `S3 is partially configured (${s3Set.join(', ')} set). Set ALL of ${s3Vars.join(', ')} or remove all of them to use local storage.`
+      );
+    }
+  }
+
   return { valid: errors.length === 0, errors, warnings };
 }
 

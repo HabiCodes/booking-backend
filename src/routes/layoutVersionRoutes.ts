@@ -10,12 +10,17 @@ import { layoutVersionService } from '../services/layoutVersionService';
 import { layoutVersionRepository } from '../repositories/layoutVersionRepository';
 import { cinemaScreenRepository } from '../repositories/cinemaScreenRepository';
 import type { LayoutVersionCreateInput, LayoutVersionSeatCreateInput } from '../types';
+import { adminAuthMiddleware } from '../middleware/adminAuth';
+import { requirePermission } from '../middleware/permissions';
+import { auditMiddleware } from '../middleware/audit';
 
 const router = Router();
 
-// ── List all versions for a screen ────────────────────────────────────────────
+router.use(adminAuthMiddleware);
 
-router.get('/screen/:screenId', async (req: any, res: any, next: any) => {
+// ── List all versions for a screen ─────────────────────────────────────────────
+
+router.get('/screen/:screenId', requirePermission('movies:read'), async (req: any, res: any, next: any) => {
   try {
     const screenId = Number(req.params.screenId);
     const versions = await layoutVersionService.listForScreen(screenId);
@@ -23,9 +28,9 @@ router.get('/screen/:screenId', async (req: any, res: any, next: any) => {
   } catch (err) { next(err); }
 });
 
-// ── Get current version for a screen ─────────────────────────────────────────
+// ── Get current version for a screen ──────────────────────────────────────────
 
-router.get('/screen/:screenId/current', async (req: any, res: any, next: any) => {
+router.get('/screen/:screenId/current', requirePermission('movies:read'), async (req: any, res: any, next: any) => {
   try {
     const screenId = Number(req.params.screenId);
     const version = await layoutVersionService.getCurrent(screenId);
@@ -36,9 +41,9 @@ router.get('/screen/:screenId/current', async (req: any, res: any, next: any) =>
   } catch (err) { next(err); }
 });
 
-// ── Get a specific version ────────────────────────────────────────────────────
+// ── Get a specific version ─────────────────────────────────────────────────────
 
-router.get('/:id', async (req: any, res: any, next: any) => {
+router.get('/:id', requirePermission('movies:read'), async (req: any, res: any, next: any) => {
   try {
     const id = Number(req.params.id);
     const version = await layoutVersionService.getById(id);
@@ -51,9 +56,9 @@ router.get('/:id', async (req: any, res: any, next: any) => {
   } catch (err) { next(err); }
 });
 
-// ── Get seats for a layout version ───────────────────────────────────────────
+// ── Get seats for a layout version ────────────────────────────────────────────
 
-router.get('/:id/seats', async (req: any, res: any, next: any) => {
+router.get('/:id/seats', requirePermission('movies:read'), async (req: any, res: any, next: any) => {
   try {
     const id = Number(req.params.id);
     const seats = await layoutVersionService.getSeats(id);
@@ -61,9 +66,9 @@ router.get('/:id/seats', async (req: any, res: any, next: any) => {
   } catch (err) { next(err); }
 });
 
-// ── Create a new layout version ───────────────────────────────────────────────
+// ── Create a new layout version ────────────────────────────────────────────────
 
-router.post('/', async (req: any, res: any, next: any) => {
+router.post('/', requirePermission('movies:write'), auditMiddleware('layout_version.create'), async (req: any, res: any, next: any) => {
   try {
     const { screenId, versionNumber, name, description, seatCapacity, rowLabels, seatsPerRow, seatStartNumber, pricingRules, seats: seatInputs } = req.body;
 
@@ -104,9 +109,9 @@ router.post('/', async (req: any, res: any, next: any) => {
   } catch (err) { next(err); }
 });
 
-// ── Create new version from current screen layout ─────────────────────────────
+// ── Create new version from current screen layout ──────────────────────────────
 
-router.post('/screen/:screenId/new-version', async (req: any, res: any, next: any) => {
+router.post('/screen/:screenId/new-version', requirePermission('movies:write'), auditMiddleware('layout_version.create_from_screen'), async (req: any, res: any, next: any) => {
   try {
     const screenId = Number(req.params.screenId);
     const { name, description } = req.body;
@@ -121,9 +126,9 @@ router.post('/screen/:screenId/new-version', async (req: any, res: any, next: an
   } catch (err) { next(err); }
 });
 
-// ── Set a version as current ──────────────────────────────────────────────────
+// ── Set a version as current ───────────────────────────────────────────────────
 
-router.patch('/:id/set-current', async (req: any, res: any, next: any) => {
+router.patch('/:id/set-current', requirePermission('movies:write'), auditMiddleware('layout_version.set_current'), async (req: any, res: any, next: any) => {
   try {
     const id = Number(req.params.id);
     const version = await layoutVersionRepository.findById(id);
@@ -139,9 +144,9 @@ router.patch('/:id/set-current', async (req: any, res: any, next: any) => {
   } catch (err) { next(err); }
 });
 
-// ── Add seat to a layout version ──────────────────────────────────────────────
+// ── Add seat to a layout version ───────────────────────────────────────────────
 
-router.post('/:id/seats', async (req: any, res: any, next: any) => {
+router.post('/:id/seats', requirePermission('movies:write'), auditMiddleware('layout_version.add_seat'), async (req: any, res: any, next: any) => {
   try {
     const id = Number(req.params.id);
     const { rowLabel, seatNumber, seatType, seatCategory, xPosition, yPosition, isAvailable } = req.body;
@@ -165,9 +170,9 @@ router.post('/:id/seats', async (req: any, res: any, next: any) => {
   } catch (err) { next(err); }
 });
 
-// ── Sync seats from screen to layout version ──────────────────────────────────
+// ── Sync seats from screen to layout version ───────────────────────────────────
 
-router.post('/:id/sync-seats', async (req: any, res: any, next: any) => {
+router.post('/:id/sync-seats', requirePermission('movies:write'), auditMiddleware('layout_version.sync_seats'), async (req: any, res: any, next: any) => {
   try {
     const id = Number(req.params.id);
     const version = await layoutVersionRepository.findById(id);
@@ -180,9 +185,9 @@ router.post('/:id/sync-seats', async (req: any, res: any, next: any) => {
   } catch (err) { next(err); }
 });
 
-// ── Delete a layout version ───────────────────────────────────────────────────
+// ── Delete a layout version ────────────────────────────────────────────────────
 
-router.delete('/:id', async (req: any, res: any, next: any) => {
+router.delete('/:id', requirePermission('movies:write'), auditMiddleware('layout_version.delete'), async (req: any, res: any, next: any) => {
   try {
     const id = Number(req.params.id);
     await layoutVersionService.deleteVersion(id);
@@ -190,9 +195,9 @@ router.delete('/:id', async (req: any, res: any, next: any) => {
   } catch (err) { next(err); }
 });
 
-// ── Initialize layout version for a screen ───────────────────────────────────
+// ── Initialize layout version for a screen ────────────────────────────────────
 
-router.post('/screen/:screenId/initialize', async (req: any, res: any, next: any) => {
+router.post('/screen/:screenId/initialize', requirePermission('movies:write'), auditMiddleware('layout_version.initialize'), async (req: any, res: any, next: any) => {
   try {
     const screenId = Number(req.params.screenId);
     const { seatCapacity, rowLabels, seatsPerRow, seats } = req.body;

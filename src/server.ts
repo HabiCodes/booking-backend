@@ -30,6 +30,7 @@ import {
   shutdown as healthShutdown,
 } from './controllers/healthController';
 import docsRoutes from './routes/docsRoutes';
+import { proxyMedia, authProxyMiddleware } from './controllers/mediaProxyController';
 import { turfCustomerRoutes } from './routes/turfRoutes';
 import { turfOrganizerRoutes } from './routes/turfOrganizerRoutes';
 import { turfAdminRoutes } from './routes/turfAdminRoutes';
@@ -119,14 +120,14 @@ app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 
-// Global API rate limiter (process-scoped, but all instances share Redis-backed sub-limiters)
-const globalLimiter = rateLimit({
+// Global API rate limiter — Redis-backed (shared across all instances).
+// This was previously express-rate-limit MemoryStore (process-scoped, not shared).
+const globalRedisLimiter = createDistributedRateLimiter({
   windowMs: config.rateLimit.windowMs,
   max: config.rateLimit.max,
-  standardHeaders: true,
-  legacyHeaders: false,
+  skipIfRedisDown: true,
 });
-app.use('/api/', globalLimiter);
+app.use('/api/', globalRedisLimiter);
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -193,6 +194,10 @@ app.use('/api', (req, res) => {
 // ── API documentation ────────────────────────────────────────────────────────
 
 app.use('/docs', docsRoutes);
+
+// ── Media proxy ─────────────────────────────────────────────────────────────
+// Auth-gated: public media loads without auth; private media requires JWT with matching org.
+app.use('/api/media/proxy', authProxyMiddleware, proxyMedia);
 
 // ── 404 ──────────────────────────────────────────────────────────────────────
 

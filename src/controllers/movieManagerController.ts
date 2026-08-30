@@ -9,6 +9,11 @@ import { Request, Response, NextFunction } from 'express';
 import { movieManagerService } from '../services/movieManagerService';
 import { requireOrganizerPermission, organizerHasPermission } from '../middleware/organizerPermissions';
 import { organizerAuthMiddleware, OrganizerRequest } from '../middleware/organizerAuth';
+import { mediaService } from '../services/mediaService';
+import { mediaRepository } from '../repositories/mediaRepository';
+import { AppError } from '../middleware/errorHandler';
+import type { UploadRequest } from '../middleware/upload';
+import { config } from '../config';
 
 // ── Movies (organizer) ────────────────────────────────────────────────────────
 
@@ -64,6 +69,106 @@ export async function deleteOrgMovie(req: OrganizerRequest, res: Response, next:
     if (!result) return res.status(404).json({ success: false, message: 'Movie not found or has active showtimes' });
     return res.json({ success: true });
   } catch (err) { return next(err); }
+}
+
+// ── Movie Poster Upload ────────────────────────────────────────────────────────
+
+/**
+ * Upload a poster image for a movie. Stores the file through the S3/media abstraction
+ * and updates the movie's poster_url with the media proxy URL.
+ */
+export async function uploadMoviePoster(req: OrganizerRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const orgId = req.organizerUser!.organizationId;
+    const movieId = Number(req.params.id);
+    const upReq = req as UploadRequest;
+    const file = upReq.upload;
+
+    if (!file) throw new AppError('No file uploaded', 400);
+
+    // Verify the movie belongs to this org
+    const existing = await movieManagerService.getMovie(orgId, movieId);
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Movie not found or not in your cinemas' });
+      return;
+    }
+
+    // If there's an existing poster stored through the media system, clean it up
+    if (existing.posterUrl && existing.posterUrl.startsWith('/api/media/proxy/')) {
+      const oldKey = decodeURIComponent(existing.posterUrl.replace('/api/media/proxy/', ''));
+      const oldMedia = await mediaRepository.findByStorageKey(oldKey);
+      if (oldMedia) {
+        await mediaService.deleteMedia(oldMedia.id);
+      }
+    }
+
+    // Upload new poster through media system
+    const media = await mediaService.processUpload(file.buffer, {
+      mimeType: file.mimeType,
+      fileName: file.originalName || 'movie_poster',
+      subdir: 'movies',
+      uploadedBy: req.organizerUser!.id,
+      uploadedByRole: 'organizer',
+      organizationId: orgId,
+      isPublic: true,
+    });
+
+    // Update movie with the new poster URL
+    const updated = await movieManagerService.updateMovie(orgId, movieId, {
+      posterUrl: media.public_url,
+    });
+
+    res.status(200).json({ success: true, data: { media, movie: updated } });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Upload a backdrop image for a movie.
+ */
+export async function uploadMovieBackdrop(req: OrganizerRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const orgId = req.organizerUser!.organizationId;
+    const movieId = Number(req.params.id);
+    const upReq = req as UploadRequest;
+    const file = upReq.upload;
+
+    if (!file) throw new AppError('No file uploaded', 400);
+
+    const existing = await movieManagerService.getMovie(orgId, movieId);
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Movie not found or not in your cinemas' });
+      return;
+    }
+
+    // Clean up old backdrop if stored through media system
+    if (existing.backdropUrl && existing.backdropUrl.startsWith('/api/media/proxy/')) {
+      const oldKey = decodeURIComponent(existing.backdropUrl.replace('/api/media/proxy/', ''));
+      const oldMedia = await mediaRepository.findByStorageKey(oldKey);
+      if (oldMedia) {
+        await mediaService.deleteMedia(oldMedia.id);
+      }
+    }
+
+    const media = await mediaService.processUpload(file.buffer, {
+      mimeType: file.mimeType,
+      fileName: file.originalName || 'movie_backdrop',
+      subdir: 'movies',
+      uploadedBy: req.organizerUser!.id,
+      uploadedByRole: 'organizer',
+      organizationId: orgId,
+      isPublic: true,
+    });
+
+    const updated = await movieManagerService.updateMovie(orgId, movieId, {
+      backdropUrl: media.public_url,
+    });
+
+    res.status(200).json({ success: true, data: { media, movie: updated } });
+  } catch (err) {
+    next(err);
+  }
 }
 
 // ── Cinemas (organizer) ───────────────────────────────────────────────────────

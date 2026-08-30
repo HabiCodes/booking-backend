@@ -591,6 +591,8 @@ export type MediaStatus = 'active' | 'archived';
 export interface MediaRow {
   id: number;
   uploaded_by: number | null;
+  uploaded_by_role: string | null;
+  organization_id: number | null;
   storage_provider: 'local' | 's3' | 'cdn' | 'gcs';
   storage_key: string;
   file_name: string;
@@ -627,10 +629,15 @@ export interface MediaPublic {
   dominant_color: string | null;
   alt_text: string | null;
   is_public: boolean;
+  organization_id: number | null;
+  uploaded_by_role: string | null;
   created_at: string;
 }
 
 export interface MediaCreateInput {
+  uploaded_by?: number | null;
+  uploaded_by_role?: string | null;
+  organization_id?: number | null;
   storage_provider?: 'local' | 's3' | 'cdn' | 'gcs';
   storage_key: string;
   file_name: string;
@@ -706,6 +713,7 @@ export interface MediaListQuery {
   search?: string;
   mime_type?: string;
   is_public?: boolean;
+  organization_id?: number;
   include_deleted?: boolean;
   fromDate?: string;
   toDate?: string;
