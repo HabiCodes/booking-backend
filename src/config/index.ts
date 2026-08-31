@@ -87,6 +87,12 @@ export const config = {
      */
     maxTicketsPerUserPerEvent: asInt(process.env.BOOKING_MAX_PER_USER, 10),
     /**
+     * Per-user-per-event cap for FREE events only. Stricter limit since there's
+     * no payment friction and events could be rapidly exhausted. Enforced in
+     * bookingService.createBooking() when event.is_free is true.
+     */
+    maxTicketsPerUserPerFreeEvent: asInt(process.env.BOOKING_MAX_PER_USER_FREE, 2),
+    /**
      * Default cancellation window (hours before start_at) when an event
      * hasn't overridden it. Individual events win via events.cancel_window_hours.
      */

@@ -23,6 +23,7 @@ interface TicketWithEvent {
   attendee_name: string;
   event_id: number;
   event_title: string;
+  event_status: string;
   checked_in: boolean;
   checked_in_at: Date | string | null;
   event_start_at: string;
@@ -38,7 +39,8 @@ async function getTicketWithEvent(uuid: string): Promise<TicketWithEvent | null>
   const { rows } = await getPool().query(
     `SELECT t.ticket_uuid, t.attendee_name, t.checked_in, t.checked_in_at,
             t.signature, t.deleted_at AS ticket_deleted_at,
-            e.id AS event_id, e.title AS event_title, e.start_at AS event_start_at,
+            e.id AS event_id, e.title AS event_title, e.status AS event_status,
+            e.start_at AS event_start_at,
             e.end_at AS event_end_at, e.deleted_at AS event_deleted_at, e.organization_id AS event_organization_id,
             b.status AS booking_status
        FROM tickets t
@@ -127,6 +129,24 @@ export class ScanService {
           signature_valid: false,
         },
         message: 'Booking has been cancelled',
+      };
+    }
+
+    // ── Event not published: reject scan ─────────────────────────────────────
+    // Only allow scanning for events that are actively published. Cancelled,
+    // hidden, archived, or draft events should not permit entry.
+    if (ticket.event_status !== 'published') {
+      return {
+        status: 'INVALID',
+        ticket: {
+          uuid: ticket.ticket_uuid,
+          attendee_name: ticket.attendee_name,
+          event_title: ticket.event_title,
+          checked_in: false,
+          checked_in_at: null,
+          signature_valid: false,
+        },
+        message: `Event is not active (status: ${ticket.event_status})`,
       };
     }
 
@@ -253,6 +273,22 @@ export class ScanService {
           signature_valid: false,
         },
         message: 'Booking has been cancelled',
+      };
+    }
+
+    // ── Event not published: reject scan ─────────────────────────────────────
+    if (ticket.event_status !== 'published') {
+      return {
+        status: 'INVALID',
+        ticket: {
+          uuid: ticket.ticket_uuid,
+          attendee_name: ticket.attendee_name,
+          event_title: ticket.event_title,
+          checked_in: false,
+          checked_in_at: null,
+          signature_valid: false,
+        },
+        message: `Event is not active (status: ${ticket.event_status})`,
       };
     }
 

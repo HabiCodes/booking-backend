@@ -131,3 +131,18 @@ export const couponRateLimiter = rateLimiter({
   max: 10,
   message: 'Too many coupon requests, please try again later.',
 });
+
+/**
+ * Rate limiter for organizer write operations (create/update/delete events,
+ * manage zones).  Prevents abuse and brute-force on organizer endpoints.
+ */
+export const organizerWriteRateLimiter = rateLimiter({
+  windowMs: 60_000,
+  max: 30,
+  keyGenerator: (req) => {
+    const organizer = (req as any).organizerUser;
+    const orgId = organizer?.organizationId ?? 'unknown';
+    return `organizer:write:${orgId}`;
+  },
+  message: 'Too many organizer requests, please try again later.',
+});

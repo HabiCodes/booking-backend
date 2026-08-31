@@ -1,4 +1,5 @@
 import { eventRepository } from '../repositories/eventRepository';
+import { eventZoneRepository } from '../repositories/eventZoneRepository';
 import type {
   EventCreateInput,
   EventListQuery,
@@ -127,6 +128,18 @@ export class EventService {
     }
     if (price > 999999) {
       throw new AppError('Price cannot exceed 999,999', 400);
+    }
+
+    // Free events must not have zones — check at service level for defense in depth
+    const becomingFree = isFree && !existing.is_free;
+    if (becomingFree) {
+      const zones = await eventZoneRepository.getActiveZonesByEvent(id);
+      if (zones.length > 0) {
+        throw new AppError(
+          'Cannot convert to free event: this event has zones. Delete all zones first.',
+          400
+        );
+      }
     }
 
     // Validate capacity

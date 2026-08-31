@@ -167,6 +167,84 @@ export interface EventUpdateInput extends Partial<EventCreateInput> {
   cancel_window_hours?: number;
 }
 
+// ── Event Zones (Migration 048) ───────────────────────────────────────────────
+
+export interface EventZoneRow {
+  id: number;
+  event_id: number;
+  name: string;
+  description: string | null;
+  color: string | null;
+  total_capacity: number;
+  remaining_capacity: number;
+  price: string;           // NUMERIC from pg
+  currency: string;
+  sort_order: number;
+  is_active: boolean;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventZonePublic {
+  id: number;
+  event_id: number;
+  name: string;
+  description: string | null;
+  color: string | null;
+  total_capacity: number;
+  remaining_capacity: number;
+  price: number;
+  currency: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export interface EventZoneCreateInput {
+  name: string;
+  description?: string | null;
+  color?: string | null;
+  total_capacity: number;
+  price: number;
+  currency?: string;
+  sort_order?: number;
+}
+
+export interface EventZoneUpdateInput {
+  name?: string;
+  description?: string | null;
+  color?: string | null;
+  total_capacity?: number;
+  price?: number;
+  is_active?: boolean;
+  sort_order?: number;
+}
+
+export interface BookingZoneRow {
+  id: number;
+  booking_id: number;
+  zone_id: number;
+  ticket_count: number;
+  unit_price_paise: number;
+  subtotal_paise: number;
+  created_at: string;
+}
+
+export interface BookingWithZonesRow extends BookingRow {
+  zones: Array<{
+    zone_id: number;
+    zone_name: string;
+    ticket_count: number;
+    unit_price_paise: number;
+    subtotal_paise: number;
+  }>;
+}
+
+// Zone-aware booking input
+export interface CreateBookingWithZoneInput extends CreateBookingInput {
+  zone_id?: number;       // Required for layout-based events
+}
+
 // ---------------------------------------------------------------------------
 // Bookings
 // ---------------------------------------------------------------------------

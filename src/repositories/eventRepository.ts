@@ -59,6 +59,20 @@ export class EventRepository {
   }
 
   /**
+   * Lock an event row FOR UPDATE inside a transaction.
+   * Returns the locked row. Use this before reading the current status
+   * for state-machine transitions to prevent TOCTOU races.
+   */
+  async lockEventById(id: number, client: import('pg').PoolClient): Promise<EventRow | null> {
+    const { rows } = await client.query(
+      `SELECT ${PUBLIC_EVENT_COLUMNS} FROM events
+       WHERE id = $1 AND deleted_at IS NULL FOR UPDATE LIMIT 1`,
+      [id]
+    );
+    return (rows as unknown as EventRow[])[0] || null;
+  }
+
+  /**
    * Lightweight lookup: get event_id and organization_id for a booking.
    * Used by settlement services to resolve org context from a booking_id.
    */
@@ -596,7 +610,7 @@ export class EventRepository {
       `SELECT e.capacity,
               COALESCE(SUM(b.ticket_count), 0) AS "bookedCount"
        FROM events e
-       LEFT JOIN bookings b ON b.event_id = e.id
+       LEFT JOIN bookings b ON b.event_id = e.id AND b.status != 'payment_pending'
        WHERE e.id = $1
        GROUP BY e.capacity`,
       [eventId]

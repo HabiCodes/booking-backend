@@ -272,7 +272,9 @@ export class BookingRepository {
   async cancelBooking(
     bookingId: number,
     userId: number | undefined,
-    reason: string | null
+    reason: string | null,
+    zoneId?: number,
+    zoneTicketCount?: number,
   ): Promise<{ cancelled: boolean; ticketCount: number; eventId: number | null }> {
     return withTransaction(async (client) => {
       const userFilter = userId !== undefined ? ' AND user_id = $2' : '';
@@ -306,9 +308,25 @@ export class BookingRepository {
         ? parseInt(updated.ticket_count, 10)
         : Number(updated?.ticket_count ?? 0);
 
-      // Release capacity
+      // Release event capacity
       if (updated?.event_id) {
         await this.releaseCapacity(client, updated.event_id, ticketCount);
+      }
+
+      // Release zone capacity (for layout-based bookings) — in the SAME transaction.
+      // If zone is deleted/missing, the UPDATE affects 0 rows — capacity release
+      // is best-effort; cancellation itself is not affected.
+      if (zoneId && zoneTicketCount && zoneTicketCount > 0 && updated?.event_id) {
+        await client.query(
+          `UPDATE event_zones
+             SET remaining_capacity = LEAST(total_capacity, remaining_capacity + $2),
+                 updated_at = NOW()
+           WHERE id = $1 AND deleted_at IS NULL
+           RETURNING remaining_capacity`,
+          [zoneId, zoneTicketCount]
+        );
+        // No throw — zone might have been deleted between booking and cancellation.
+        // The booking cancellation (event capacity release) is the critical path.
       }
 
       return { cancelled: true, ticketCount, eventId: updated?.event_id ?? null };

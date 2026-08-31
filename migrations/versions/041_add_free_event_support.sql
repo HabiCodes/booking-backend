@@ -9,7 +9,8 @@ ALTER TABLE events ADD CONSTRAINT events_free_price_check
   CHECK (NOT is_free OR price = 0);
 
 -- Add booking status for payment pending (paid events awaiting payment)
-ALTER TYPE booking_status ADD VALUE IF NOT EXISTS 'payment_pending';
+-- Note: bookings.status is VARCHAR, not an enum type, so no ALTER TYPE needed.
+-- The payment_pending status is validated at the application layer.
 
 -- Index for free event queries
 CREATE INDEX IF NOT EXISTS idx_events_is_free ON events(is_free) WHERE deleted_at IS NULL;

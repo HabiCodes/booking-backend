@@ -25,6 +25,7 @@ import { movieBookingService } from '../services/movieBookingService';
 import { bookingService } from '../services/bookingService';
 import { eventSettlementService } from '../services/eventSettlementService';
 import { refundRepository } from '../repositories/refundRepository';
+import { getPaymentService } from './paymentService';
 import type { PaymentOrderRow, PaymentOrderStatus } from '../types';
 
 import crypto from 'crypto';
@@ -91,13 +92,38 @@ export function eventWebhookIdempotencyKey(orderId: string, eventType: string): 
 export async function processBookingCompleted(paymentOrder: PaymentOrderRow, bookingType: string): Promise<boolean> {
   try {
     if (bookingType === 'event') {
+      // Verify payment amount against server-calculated expected amount (FINDING 3 fix)
+      const snapshot = (paymentOrder as any).financial_snapshot as Record<string, unknown> | null;
+      const expectedTotalPaise = snapshot?.totalPaise as number | undefined;
+      const paidAmountPaise = Math.round(Number(paymentOrder.amount));
+      if (typeof expectedTotalPaise === 'number' && expectedTotalPaise > 0) {
+        const paymentSvc = getPaymentService();
+        paymentSvc.verifyPaymentAmount(expectedTotalPaise, paidAmountPaise);
+        logger.info(`[Webhook] Amount verified for event booking: booking_id=${paymentOrder.booking_id}, expected=${expectedTotalPaise} paise, paid=${paidAmountPaise} paise`);
+      } else {
+        logger.warn(`[Webhook] No financial_snapshot.totalPaise for event booking: booking_id=${paymentOrder.booking_id}, skipping amount verification`);
+      }
+
       const result = await bookingService.confirmBooking(paymentOrder.booking_id);
       if (result.confirmed) {
         logger.info(`[Webhook] Event booking confirmed: booking_id=${paymentOrder.booking_id}`);
-        // Create settlement record for the event organizer (fire-and-forget — not on critical path)
-        eventSettlementService.createSettlementForBooking(paymentOrder.booking_id).catch((err) =>
-          logger.error(`[Webhook] Event settlement failed for booking ${paymentOrder.booking_id}:`, err as Error)
-        );
+        // Create settlement record for the event organizer.
+        // Not on the critical path — failure is logged with structured data so
+        // the settlement worker can detect and retry missed records.
+        try {
+          await eventSettlementService.createSettlementForBooking(paymentOrder.booking_id);
+        } catch (settlementErr) {
+          // Structured failure log — settlement worker retries via processDueSettlements()
+          logger.error(
+            '[Settlement] Failed to create settlement for event booking',
+            {
+              bookingId: paymentOrder.booking_id,
+              bookingType,
+              orderId: paymentOrder.order_id,
+              err: settlementErr instanceof Error ? settlementErr.message : String(settlementErr),
+            },
+          );
+        }
       }
     } else if (bookingType === 'movie') {
       const booking = await movieBookingRepository.findById(paymentOrder.booking_id);

@@ -1,12 +1,14 @@
 import { withTransaction } from '../db/pool';
 import { eventRepository } from '../repositories/eventRepository';
+import { logger } from '../utils/logger';
 import { userRepository } from '../repositories/userRepository';
 import { bookingRepository } from '../repositories/bookingRepository';
+import { eventZoneRepository } from '../repositories/eventZoneRepository';
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
 import { AppError } from '../middleware/errorHandler';
 import { config } from '../config';
 import { UniversalTicketService, DOMAIN_PREFIXES } from '../services/universalTicketService';
-import type { BookingRow, AttendeeInput, EventRow } from '../types';
+import type { BookingRow, AttendeeInput, EventRow, EventZoneRow } from '../types';
 
 // Re-export for controllers
 export type { BookingRow, AttendeeInput };
@@ -72,10 +74,18 @@ export class BookingService {
       throw new AppError('Paid event must have a valid price between 0 and 999999', 400);
     }
 
-    // ── Rule: per-user-per-event cap ─────────────────────────────────────────
-    const maxPerUser = config.bookings.maxTicketsPerUserPerEvent;
+    // ── Rule: per-user-per-event cap (free events are capped at 2 tickets) ──
+    const maxPerUser = event.is_free
+      ? config.bookings.maxTicketsPerUserPerFreeEvent
+      : config.bookings.maxTicketsPerUserPerEvent;
     const existingCount = await bookingRepository.getUserBookedCount(userId, eventId);
     if (existingCount + ticketCount > maxPerUser) {
+      if (event.is_free) {
+        throw new AppError(
+          `Free event booking limit reached. You already have ${existingCount} ticket(s) for this event. Maximum ${maxPerUser} tickets per user for free events.`,
+          403
+        );
+      }
       throw new AppError(
         `Booking limit reached. You already have ${existingCount} ticket(s) for this event. Limit is ${maxPerUser} per user.`,
         403
@@ -138,7 +148,13 @@ export class BookingService {
       result.bookingId, null, 'user', userId,
       result.initialStatus === 'confirmed' ? 'booking_created_free' : 'booking_created_pending',
       { eventId, ticketCount, eventTitle: event.title, isFree: event.is_free }
-    ).catch(() => {});
+    ).catch((err) => {
+      logger.warn('Booking audit log write failed', {
+        bookingId: result.bookingId,
+        actor: 'user',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 
     // Free event: tickets are immediately valid, no payment needed
     if (event.is_free) {
@@ -166,6 +182,181 @@ export class BookingService {
       paymentRequired: true,
       paymentOrderId: opts?.paymentOrderId,
       paymentSessionId: opts?.paymentSessionId,
+    };
+  }
+
+  /**
+   * Create a booking for a LAYOUT-BASED PAID EVENT (zone-based pricing).
+   *
+   * Flow:
+   *   1. Validate event exists, is published, has zones
+   *   2. Validate zone_id is provided and zone is active
+   *   3. Check zone capacity >= ticketCount
+   *   4. Atomically reserve zone capacity AND event global capacity
+   *   5. Insert booking (status: 'payment_pending')
+   *   6. Generate UUIDs + sign tickets
+   *   7. Insert tickets
+   *   8. Record booking_zone join row
+   *   9. Return bookingId + zone info for payment calculation
+   */
+  async createZoneBooking(
+    userId: number,
+    eventId: number,
+    zoneId: number,
+    attendees: AttendeeInput[],
+    opts?: {
+      paymentOrderId?: string;
+      paymentSessionId?: string;
+    }
+  ): Promise<{
+    bookingId: number;
+    tickets: Array<{ ticket_uuid: string; attendee_name: string; attendee_phone: string; signature: string }>;
+    paymentRequired: boolean;
+    paymentOrderId?: string;
+    paymentSessionId?: string;
+    zoneId: number;
+    zonePricePaise: number;
+    zoneName: string;
+  }> {
+    const ticketCount = attendees.length;
+
+    // ── Rule: at least 1 ticket ───────────────────────────────────────────────
+    if (ticketCount < 1) {
+      throw new AppError('At least 1 ticket required', 400);
+    }
+
+    // ── Rule: max tickets per booking ────────────────────────────────────────
+    const maxPerBooking = config.bookings.maxTicketsPerBooking;
+    if (ticketCount > maxPerBooking) {
+      throw new AppError(
+        `You can book at most ${maxPerBooking} tickets at once`,
+        400
+      );
+    }
+
+    // ── Rule: per-user-per-event cap ─────────────────────────────────────────
+    const maxPerUser = config.bookings.maxTicketsPerUserPerEvent;
+    const existingCount = await bookingRepository.getUserBookedCount(userId, eventId);
+    if (existingCount + ticketCount > maxPerUser) {
+      throw new AppError(
+        `Booking limit reached. You already have ${existingCount} ticket(s) for this event. Limit is ${maxPerUser} per user.`,
+        403
+      );
+    }
+
+    // ── Event existence + zone validation ────────────────────────────────────
+    const event = await eventRepository.getEventById(eventId);
+    if (!event) {
+      throw new AppError('Event not found', 404);
+    }
+    if (event.status !== 'published') {
+      throw new AppError('This event is not open for booking', 400);
+    }
+    // Free events must not be booked with zones
+    if (event.is_free) {
+      throw new AppError('Free events do not support zone-based booking', 400);
+    }
+
+    // Validate zone (active-only lookup — enforces deleted_at IS NULL AND is_active = true)
+    const zone = await eventZoneRepository.getActiveZoneById(zoneId);
+    if (!zone) {
+      throw new AppError('Zone not found', 404);
+    }
+    if (zone.event_id !== eventId) {
+      throw new AppError('Zone does not belong to this event', 400);
+    }
+
+    // ── Atomic zone capacity + event capacity reservation ────────────────────
+    const zonePricePaise = Math.round(Number(zone.price) * 100);
+
+    const result = await withTransaction(async (client) => {
+      // 1. Lock and decrement zone capacity
+      const newZoneRemaining = await eventZoneRepository.decrementZoneCapacity(zoneId, ticketCount);
+      if (newZoneRemaining < 0) {
+        throw new AppError(`Not enough tickets available in "${zone.name}" — only ${zone.remaining_capacity} left.`, 409);
+      }
+
+      // 2. Lock and decrement global event capacity
+      const newEventRemaining = await bookingRepository.reserveCapacity(client, eventId, ticketCount);
+      if (newEventRemaining < 0) {
+        throw new AppError('Not enough tickets available for this event — please try again.', 409);
+      }
+
+      // 3. Insert booking row — always 'payment_pending' for zone-based paid events
+      const bookingId = await bookingRepository.createBooking(client, userId, eventId, ticketCount, 'payment_pending');
+
+      // 4. Generate ticket UUIDs
+      const ticketUuids = attendees.map((_, idx) =>
+        UniversalTicketService.generateTicketUuid('event')
+      );
+
+      // 5. Insert tickets
+      const insertedTickets = await bookingRepository.createTicketsWithUuids(
+        client, bookingId, attendees, ticketUuids
+      );
+
+      // 6. Sign tickets
+      const signedTickets = insertedTickets.map(t => ({
+        ...t,
+        signature: UniversalTicketService.sign({
+          domain: 'event',
+          ticketUuid: t.ticket_uuid,
+          entityId: eventId,
+          startAt: event.start_at,
+        }),
+      }));
+
+      for (const t of signedTickets) {
+        await client.query(
+          'UPDATE tickets SET signature = $1 WHERE id = $2',
+          [t.signature, t.id]
+        );
+      }
+
+      // 7. Record booking_zone join
+      await eventZoneRepository.createBookingZone(
+        bookingId,
+        zoneId,
+        ticketCount,
+        zonePricePaise
+      );
+
+      return {
+        bookingId,
+        tickets: signedTickets,
+        zonePricePaise,
+        zoneName: zone.name,
+      };
+    });
+
+    // Audit log
+    bookingRepository.writeBookingAudit(
+      result.bookingId, null, 'user', userId,
+      'booking_created_zone_pending',
+      { eventId, ticketCount, eventTitle: event.title, zoneId, zoneName: result.zoneName, zonePricePaise }
+    ).catch((err) => {
+      logger.warn('Booking audit log write failed', {
+        bookingId: result.bookingId,
+        action: 'booking_created_zone_pending',
+        actor: 'user',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    return {
+      bookingId: result.bookingId,
+      tickets: result.tickets.map(t => ({
+        ticket_uuid: t.ticket_uuid,
+        attendee_name: t.attendee_name,
+        attendee_phone: t.attendee_phone,
+        signature: t.signature,
+      })),
+      paymentRequired: true,
+      paymentOrderId: opts?.paymentOrderId,
+      paymentSessionId: opts?.paymentSessionId,
+      zoneId,
+      zonePricePaise: result.zonePricePaise,
+      zoneName: result.zoneName,
     };
   }
 
@@ -249,19 +440,51 @@ export class BookingService {
       );
     }
 
-    // Atomic cancel + capacity release
-    const result = await bookingRepository.cancelBooking(bookingId, userId ?? 0, reason ?? null);
+    // For layout-based bookings, get zone info BEFORE the atomic cancel
+    // so we can restore zone capacity in the same transaction.
+    let layoutZoneId: number | undefined;
+    let layoutZoneTicketCount: number | undefined;
+    if (!event?.is_free) {
+      try {
+        const bookingZone = await eventZoneRepository.getBookingZone(bookingId);
+        if (bookingZone) {
+          layoutZoneId = bookingZone.zone_id;
+          layoutZoneTicketCount = bookingZone.ticket_count;
+        }
+      } catch {
+        // zone lookup failed — will fall through to non-layout cancellation path
+      }
+    }
+
+    // Atomic cancel + capacity release (event + zone in the same transaction)
+    const result = await bookingRepository.cancelBooking(
+      bookingId,
+      userId ?? 0,
+      reason ?? null,
+      layoutZoneId,
+      layoutZoneTicketCount,
+    );
 
     if (!result.cancelled) {
       throw new AppError('Failed to cancel booking', 500);
     }
 
+    // Zone capacity is released inside the atomic bookingRepository.cancelBooking()
+    // transaction. No additional release needed here.
+
     // Audit log
     bookingRepository.writeBookingAudit(
       bookingId, null, 'system', userId ?? 0,
       'booking_cancelled',
-      { ticketCount: result.ticketCount, eventId: result.eventId, reason }
-    ).catch(() => {});
+      { ticketCount: result.ticketCount, eventId: result.eventId, reason, zoneReleased: !!result }
+    ).catch((err) => {
+      logger.warn('Booking audit log write failed', {
+        bookingId,
+        action: 'booking_cancelled',
+        actor: 'system',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 
     return {
       cancelled: true,
@@ -282,11 +505,15 @@ export class BookingService {
     const rows = await withTransaction(async (client) => {
       const result = await client.query(
         `SELECT b.*, e.title AS event_title, e.venue AS event_venue, e.start_at AS event_start_at,
-                e.is_free AS event_is_free, e.price AS event_price
-         FROM bookings b
-         INNER JOIN events e ON b.event_id = e.id
-         WHERE b.user_id = $1
-         ORDER BY b.created_at DESC`,
+                e.is_free AS event_is_free, e.price AS event_price,
+                bz.zone_id, bz.ticket_count AS zone_ticket_count, bz.unit_price_paise AS zone_unit_price_paise,
+                ez.name AS zone_name
+           FROM bookings b
+           INNER JOIN events e ON b.event_id = e.id
+           LEFT JOIN booking_zones bz ON bz.booking_id = b.id
+           LEFT JOIN event_zones ez ON ez.id = bz.zone_id
+          WHERE b.user_id = $1
+          ORDER BY b.created_at DESC`,
         [userId]
       );
       return result.rows;
@@ -298,6 +525,10 @@ export class BookingService {
       event_start_at: Date;
       event_is_free: boolean;
       event_price: number | string;
+      zone_id: number | null;
+      zone_name: string | null;
+      zone_ticket_count: number | null;
+      zone_unit_price_paise: number | null;
     }>;
   }
 }

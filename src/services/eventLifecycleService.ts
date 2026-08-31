@@ -115,8 +115,8 @@ export class EventLifecycleService {
 
     return withTransaction(async (client) => {
       // Read with FOR UPDATE so concurrent transitions on the same event
-      // are serialized.
-      const current = await eventRepository.getEventById(eventId);
+      // are serialized. Prevents TOCTOU between status check and update.
+      const current = await eventRepository.lockEventById(eventId, client);
       if (!current) {
         throw new AppError(`Event ${eventId} not found`, 404);
       }

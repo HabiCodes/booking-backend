@@ -1,5 +1,13 @@
 import { Router } from 'express';
 import {
+  listZones,
+  getZone,
+  adminCreateZone,
+  adminUpdateZone,
+  adminDeleteZone,
+  adminGetAvailability,
+} from '../controllers/eventZoneController';
+import {
   listEvents,
   getEvent,
   getStats,
@@ -41,6 +49,10 @@ router.get('/categories', getCategories);
 router.get('/cities', getCities);
 router.get('/:id/stats', getStats);
 router.get('/:id', getEvent);
+
+// ── Public zone routes ────────────────────────────────────────────────────────
+router.get('/:id/zones', listZones);
+router.get('/:id/zones/:zoneId', getZone);
 
 // ── Admin routes (mounted on admin protected router) ─────────────────────────
 export const adminEventRouter = Router();
@@ -112,8 +124,6 @@ adminEventRouter.post(
 );
 
 // ── Lifecycle workflow routes (Migration 014) ──────────────────────────────────
-// Each transition is audited. The event_status_history insert is handled
-// by EventLifecycleService (appended atomically with the status change).
 adminEventRouter.post(
   '/:id/submit-for-review',
   requirePermission('events:write'),
@@ -155,6 +165,31 @@ adminEventRouter.post(
   requirePermission('events:write'),
   auditMiddleware('event.restore'),
   (req: AdminRequest, res, next) => restoreEvent(req, res, next)
+);
+
+// ── Zone CRUD (admin) ────────────────────────────────────────────────────────
+adminEventRouter.post(
+  '/:id/zones',
+  requirePermission('events:write'),
+  auditMiddleware('event.zone.create'),
+  (req: AdminRequest, res, next) => adminCreateZone(req, res, next)
+);
+adminEventRouter.put(
+  '/zones/:zoneId',
+  requirePermission('events:write'),
+  auditMiddleware('event.zone.update'),
+  (req: AdminRequest, res, next) => adminUpdateZone(req, res, next)
+);
+adminEventRouter.delete(
+  '/zones/:zoneId',
+  requirePermission('events:write'),
+  auditMiddleware('event.zone.delete'),
+  (req: AdminRequest, res, next) => adminDeleteZone(req, res, next)
+);
+adminEventRouter.get(
+  '/:id/zones/availability',
+  requirePermission('events:read'),
+  (req: AdminRequest, res, next) => adminGetAvailability(req, res, next)
 );
 
 // ── Review queue ──────────────────────────────────────────────────────────────

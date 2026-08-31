@@ -159,7 +159,30 @@ export async function adminCreateEvent(req: Request, res: Response, next: NextFu
 export async function adminUpdateEvent(req: Request, res: Response, next: NextFunction) {
   try {
     const id = parseInt(req.params.id, 10);
-    const event = await eventService.updateEvent(id, req.body);
+
+    // Mass-assignment protection: strip fields that must be changed only through
+    // dedicated lifecycle endpoints (publish/hide/show/cancel/archive/restore/feature).
+    // The generic PUT endpoint only allows content/date/price/capacity edits.
+    const allowedFields = new Set([
+      'title', 'subtitle', 'description', 'category', 'venue',
+      'address', 'city', 'state', 'country',
+      'latitude', 'longitude',
+      'event_date', 'start_time', 'end_time',
+      'start_at', 'end_at',
+      'banner_url', 'thumbnail_url', 'logo_url',
+      'gallery', 'organizer',
+      'capacity', 'price', 'currency',
+      'cancel_window_hours',
+      'is_active',
+    ]);
+    const whitelisted: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(req.body)) {
+      if (allowedFields.has(key)) {
+        whitelisted[key] = value;
+      }
+    }
+
+    const event = await eventService.updateEvent(id, whitelisted);
     res.json({ success: true, data: event });
   } catch (err) {
     return next(err);
