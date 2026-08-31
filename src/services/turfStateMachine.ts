@@ -20,7 +20,7 @@ export const TURF_BOOKING_TRANSITIONS: Record<string, readonly string[]> = {
   [TURF_BOOKING_STATES.PENDING_PAYMENT]: ['confirmed', 'cancelled', 'expired'],
   [TURF_BOOKING_STATES.CONFIRMED]: ['checked_in', 'cancelled'],
   [TURF_BOOKING_STATES.CHECKED_IN]: ['completed', 'cancelled'],
-  [TURF_BOOKING_STATES.COMPLETED]: ['cancelled'],
+  [TURF_BOOKING_STATES.COMPLETED]: [],
   [TURF_BOOKING_STATES.CANCELLED]: [],
   [TURF_BOOKING_STATES.REFUNDED]: [],
   [TURF_BOOKING_STATES.EXPIRED]: [],

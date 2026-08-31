@@ -236,7 +236,8 @@ export class TurfBookingService {
           'INSERT INTO turf_coupon_usages (coupon_id, booking_id, user_id, discount_amount) VALUES ($1, $2, $3, $4)',
           [couponId, booking.id, userId, discountAmount]
         );
-        await client.query('UPDATE turf_coupons SET used_count = used_count + 1 WHERE id = $1', [couponId]);
+        // Guard against concurrent usage_limit breach
+        await client.query('UPDATE turf_coupons SET used_count = used_count + 1 WHERE id = $1 AND (usage_limit IS NULL OR used_count < usage_limit)', [couponId]);
       }
 
       await turfAvailabilityRepository.markPaymentPending(unit.id, userId);
@@ -776,16 +777,20 @@ export class TurfBookingService {
     const coins = Math.floor(amount);
     if (coins <= 0) return;
 
-    turfWalletRepository.create({
-      user_id: userId,
-      organization_id: orgId,
-      coins,
-      balance_after: 0,
-      type: 'earn',
-      category: 'per_booking',
-      booking_id: bookingId,
-      description: `Earned ${coins} coins from booking`,
-      actor_type: 'system',
+    // Compute actual balance_after for audit accuracy
+    turfWalletRepository.getBalance(userId).then(balance => {
+      const balanceAfter = balance + coins;
+      return turfWalletRepository.create({
+        user_id: userId,
+        organization_id: orgId,
+        coins,
+        balance_after: balanceAfter,
+        type: 'earn',
+        category: 'per_booking',
+        booking_id: bookingId,
+        description: `Earned ${coins} coins from booking`,
+        actor_type: 'system',
+      });
     }).catch(err => logger.error(`[TurfWallet] Earn failed for booking ${bookingId}:`, err));
   }
 }

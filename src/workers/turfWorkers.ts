@@ -36,13 +36,16 @@ export async function runTurfWorkers(job: TurfWorkerJob = 'all'): Promise<void> 
 
   try {
     if (job === 'expire' || job === 'all') {
-      const [expired, holds, locks] = await Promise.all([
-        turfExpireStaleBookings(),
-        turfExpireStaleHolds(),
-        turfReconcileStaleLocks(),
-      ]);
+      // Run sequentially (not in parallel) to avoid FOR UPDATE deadlocks
+      // when multiple workers hold transactions on overlapping tables
+      // (turf_holds, turf_availability_units, turf_bookings).
+      const expired = await turfExpireStaleBookings();
       if (expired > 0) logger.info(`[TurfWorker] Expired ${expired} stale bookings`);
+
+      const holds = await turfExpireStaleHolds();
       if (holds > 0) logger.info(`[TurfWorker] Expired ${holds} stale holds`);
+
+      const locks = await turfReconcileStaleLocks();
       if (locks > 0) logger.info(`[TurfWorker] Reconciled ${locks} stale locks`);
     }
 

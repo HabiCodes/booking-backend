@@ -36,7 +36,13 @@ export class TurfCouponRepository {
   }
 
   async incrementUsage(id: number): Promise<void> {
-    await getPool().query('UPDATE turf_coupons SET used_count = used_count + 1 WHERE id = $1', [id]);
+    const { rowCount } = await getPool().query(
+      'UPDATE turf_coupons SET used_count = used_count + 1 WHERE id = $1 AND (usage_limit IS NULL OR used_count < usage_limit)',
+      [id]
+    );
+    if (rowCount === 0) {
+      throw new Error('Coupon usage limit reached');
+    }
   }
 
   async createUsage(input: { coupon_id: number; booking_id: number; user_id: number; discount_amount: number }): Promise<TurfCouponUsageRow> {

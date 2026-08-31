@@ -38,10 +38,15 @@ describe('turfStateMachine — NO CUSTOMER REFUND policy', () => {
     });
   });
 
-  it('completed → cancelled IS allowed', () => {
-    assert.doesNotThrow(() => {
+  it('completed → cancelled is NOT allowed (terminal)', () => {
+    assert.throws(() => {
       assertTransition(TURF_BOOKING_STATES.COMPLETED, TURF_BOOKING_STATES.CANCELLED);
-    });
+    }, /Cannot transition/);
+  });
+
+  it('completed has no outgoing transitions (terminal)', () => {
+    const transitions = TURF_BOOKING_TRANSITIONS[TURF_BOOKING_STATES.COMPLETED];
+    assert.strictEqual(transitions.length, 0, 'completed should be a terminal state');
   });
 
   it('pending_payment → confirmed IS allowed', () => {

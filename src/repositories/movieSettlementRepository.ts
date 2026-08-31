@@ -30,11 +30,12 @@ export class MovieSettlementRepository {
   }
 
   async create(input: { organization_id: number; gross_amount?: number; commission_amount?: number; tax_amount?: number; net_amount?: number }): Promise<MovieSettlementRow> {
+    const scheduledAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
     const { rows } = await getPool().query(
       `INSERT INTO turf_settlements (organization_id, gross_amount, commission_amount, tax_amount, net_amount, scheduled_at)
-       VALUES ($1,$2,$3,$4,$5,'NOW() + INTERVAL ''12 hours''')
+       VALUES ($1,$2,$3,$4,$5,$6)
        RETURNING *`,
-      [input.organization_id, input.gross_amount ?? 0, input.commission_amount ?? 0, input.tax_amount ?? 0, input.net_amount ?? 0]
+      [input.organization_id, input.gross_amount ?? 0, input.commission_amount ?? 0, input.tax_amount ?? 0, input.net_amount ?? 0, scheduledAt]
     );
     return rows[0] as MovieSettlementRow;
   }
@@ -59,11 +60,11 @@ export class MovieSettlementRepository {
   async findOrCreatePendingSettlement(orgId: number): Promise<MovieSettlementRow> {
     const { rows } = await getPool().query(
       `INSERT INTO turf_settlements (organization_id, scheduled_at)
-       VALUES ($1, "NOW() + INTERVAL '12 hours'")
+       VALUES ($1, $2)
        ON CONFLICT (organization_id) WHERE status = 'pending'
        DO UPDATE SET updated_at = NOW()
        RETURNING *`,
-      [orgId]
+      [orgId, new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString()]
     );
     return rows[0] as MovieSettlementRow;
   }

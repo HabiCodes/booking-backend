@@ -26,7 +26,7 @@ export class TurfSettlementRepository {
   async create(input: Record<string, unknown>): Promise<TurfSettlementRow> {
     const { rows } = await getPool().query(
       `INSERT INTO turf_settlements (organization_id, gross_amount, commission_amount, tax_amount, net_amount, scheduled_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [input.organization_id, input.gross_amount ?? 0, input.commission_amount ?? 0, input.tax_amount ?? 0, input.net_amount ?? 0, input.scheduled_at ?? 'NOW() + INTERVAL \'12 hours\'']
+      [input.organization_id, input.gross_amount ?? 0, input.commission_amount ?? 0, input.tax_amount ?? 0, input.net_amount ?? 0, input.scheduled_at ?? new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString()]
     );
     return rows[0] as TurfSettlementRow;
   }
@@ -50,11 +50,11 @@ export class TurfSettlementRepository {
   async findOrCreatePendingSettlement(orgId: number): Promise<TurfSettlementRow> {
     const { rows } = await getPool().query(
       `INSERT INTO turf_settlements (organization_id, scheduled_at)
-       VALUES ($1, "NOW() + INTERVAL '12 hours'")
+       VALUES ($1, $2)
        ON CONFLICT (organization_id) WHERE status = 'pending'
        DO UPDATE SET updated_at = NOW()
        RETURNING *`,
-      [orgId]
+      [orgId, new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString()]
     );
     return rows[0] as TurfSettlementRow;
   }

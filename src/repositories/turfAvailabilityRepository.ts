@@ -126,7 +126,7 @@ export class TurfAvailabilityRepository {
     const { rows } = await getPool().query(
       `UPDATE turf_availability_units
        SET status = 'payment_pending', lock_holder_id = $2, lock_expires_at = NOW() + INTERVAL '5 minutes'
-       WHERE id = $1 AND status = 'locked' AND lock_holder_id = $2
+       WHERE id = $1 AND status IN ('available', 'locked') AND (lock_holder_id = $2 OR status = 'available')
        RETURNING *`,
       [unitId, holderId]
     );
@@ -135,7 +135,7 @@ export class TurfAvailabilityRepository {
 
   async markBooked(unitId: number): Promise<void> {
     await getPool().query(
-      "UPDATE turf_availability_units SET status = 'booked' WHERE id = $1 AND status = 'locked'",
+      "UPDATE turf_availability_units SET status = 'booked' WHERE id = $1 AND status IN ('locked', 'payment_pending')",
       [unitId]
     );
   }

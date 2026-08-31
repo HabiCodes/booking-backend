@@ -890,7 +890,7 @@ export class AvailabilityEngine {
 
   /**
    * Release a unit back to available.
-   * Cleans up both Redis hint and DB state atomically.
+   * Cleans up both DB hold state and unit availability atomically in a single transaction.
    */
   async releaseUnit(unitId: number): Promise<void> {
     const pool = getPool();
@@ -906,6 +906,12 @@ export class AvailabilityEngine {
         [unitId]
       );
 
+      // Reset the unit — INSIDE transaction so hold release + availability are atomic
+      await client.query(
+        "UPDATE turf_availability_units SET status = 'available', lock_holder_id = NULL, lock_expires_at = NULL WHERE id = $1",
+        [unitId]
+      );
+
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -914,10 +920,7 @@ export class AvailabilityEngine {
       client.release();
     }
 
-    // Reset the unit
-    await turfAvailabilityRepository.markAvailable(unitId);
-
-    // Clean up Redis hint
+    // Clean up Redis hint (non-critical, outside transaction)
     try {
       const redis = getRedis();
       await redis.del(holdRedisKey(unitId));
