@@ -29,9 +29,10 @@ export async function adminListRefunds(req: AdminRequest, res: Response, next: N
     const page = parseInt((req.query.page as string) || '1', 10);
     const pageSize = parseInt((req.query.pageSize as string) || '20', 10);
     const status = req.query.status as string | undefined;
-    const organizationId = req.query.organizationId
-      ? parseInt(req.query.organizationId as string, 10)
-      : undefined;
+
+    // Org-scoped admin: force filter to their org, ignore client-supplied organizationId
+    const adminOrgId = req.admin?.organizationId ?? null;
+    const organizationId = adminOrgId !== null ? adminOrgId : (req.query.organizationId ? parseInt(req.query.organizationId as string, 10) : undefined);
 
     const result = await refundRepository.listAll({
       page,
@@ -57,6 +58,16 @@ export async function adminGetRefund(req: AdminRequest, res: Response, next: Nex
 
     const refund = await refundRepository.findById(id);
     if (!refund) throw new AppError('Refund not found', 404);
+
+    // Verify org ownership: refund → payment_order → organization_id
+    const order = await paymentOrderRepository.findById(refund.payment_order_id);
+    if (!order) throw new AppError('Payment order not found for this refund', 404);
+
+    const adminOrgId = req.admin?.organizationId ?? null;
+    if (adminOrgId !== null && order.organization_id !== adminOrgId) {
+      throw new AppError('Not authorized to access this refund', 403);
+    }
+
     res.json({ success: true, data: refund });
   } catch (err) {
     next(err);
@@ -84,6 +95,12 @@ export async function adminCreateRefund(req: AdminRequest, res: Response, next: 
 
     const order = await paymentOrderRepository.findById(paymentOrderId);
     if (!order) throw new AppError('Payment order not found', 404);
+
+    // Verify org ownership
+    const adminOrgId = req.admin?.organizationId ?? null;
+    if (adminOrgId !== null && order.organization_id !== adminOrgId) {
+      throw new AppError('Not authorized to refund this payment order', 403);
+    }
 
     const result = await getLocalPaymentService().processRefund(
       {

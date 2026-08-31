@@ -1,6 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
+import { AppError } from '../middleware/errorHandler';
 import { eventService } from '../services/eventService';
-import type { EventListQuery } from '../types';
+import { eventRepository } from '../repositories/eventRepository';
+import type { AdminRequest } from '../middleware/adminAuth';
+import type { EventCreateInput, EventListQuery } from '../types';
 
 // ── Public endpoints ────────────────────────────────────────────────────────
 
@@ -119,8 +122,17 @@ export async function getCities(_req: Request, res: Response, next: NextFunction
 
 // ── Admin endpoints (CRUD) ──────────────────────────────────────────────────
 
-export async function adminListEvents(req: Request, res: Response, next: NextFunction) {
+function enforceEventOrgAccess(req: AdminRequest, event: { organization_id: number | null }): void {
+  const adminOrgId = req.admin?.organizationId ?? null;
+  if (adminOrgId === null) return; // super_admin — global access
+  if (event.organization_id !== adminOrgId) {
+    throw new AppError('Not authorized to access this event', 403);
+  }
+}
+
+export async function adminListEvents(req: AdminRequest, res: Response, next: NextFunction) {
   try {
+    const adminOrgId = req.admin?.organizationId ?? null;
     const query: EventListQuery = {
       page: req.query.page ? Number(req.query.page) : undefined,
       pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
@@ -130,7 +142,7 @@ export async function adminListEvents(req: Request, res: Response, next: NextFun
       status: req.query.status as EventListQuery['status'],
       include_deleted: req.query.include_deleted === 'true',
     };
-    const result = await eventService.listAllEvents(query);
+    const result = await eventService.listAllEvents(query, adminOrgId);
     res.json({
       success: true,
       data: result.items,
@@ -146,9 +158,18 @@ export async function adminListEvents(req: Request, res: Response, next: NextFun
   }
 }
 
-export async function adminCreateEvent(req: Request, res: Response, next: NextFunction) {
+export async function adminCreateEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
-    const id = await eventService.createEvent(req.body);
+    const adminOrgId = req.admin?.organizationId ?? null;
+    const payload = { ...(req.body as Record<string, unknown>) };
+
+    // Org-scoped admin: force event into their organization, ignore client-supplied org_id
+    if (adminOrgId !== null) {
+      payload.organization_id = adminOrgId;
+    }
+    // Super_admin (adminOrgId=null): can create events without org or with explicit org_id
+
+    const id = await eventService.createEvent(payload as unknown as EventCreateInput);
     const event = await eventService.getEventById(id);
     res.status(201).json({ success: true, data: event });
   } catch (err) {
@@ -156,13 +177,15 @@ export async function adminCreateEvent(req: Request, res: Response, next: NextFu
   }
 }
 
-export async function adminUpdateEvent(req: Request, res: Response, next: NextFunction) {
+export async function adminUpdateEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const id = parseInt(req.params.id, 10);
+    const existing = await eventRepository.getEventById(id);
+    if (!existing) throw new AppError('Event not found', 404);
+    enforceEventOrgAccess(req, existing);
 
     // Mass-assignment protection: strip fields that must be changed only through
     // dedicated lifecycle endpoints (publish/hide/show/cancel/archive/restore/feature).
-    // The generic PUT endpoint only allows content/date/price/capacity edits.
     const allowedFields = new Set([
       'title', 'subtitle', 'description', 'category', 'venue',
       'address', 'city', 'state', 'country',
@@ -182,6 +205,12 @@ export async function adminUpdateEvent(req: Request, res: Response, next: NextFu
       }
     }
 
+    // Org-scoped admin: prevent changing organization_id
+    const adminOrgId = req.admin?.organizationId ?? null;
+    if (adminOrgId !== null && whitelisted.organization_id !== undefined) {
+      delete whitelisted.organization_id;
+    }
+
     const event = await eventService.updateEvent(id, whitelisted);
     res.json({ success: true, data: event });
   } catch (err) {
@@ -189,9 +218,12 @@ export async function adminUpdateEvent(req: Request, res: Response, next: NextFu
   }
 }
 
-export async function adminDeleteEvent(req: Request, res: Response, next: NextFunction) {
+export async function adminDeleteEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const id = parseInt(req.params.id, 10);
+    const existing = await eventRepository.getEventById(id);
+    if (!existing) throw new AppError('Event not found', 404);
+    enforceEventOrgAccess(req, existing);
     await eventService.deleteEvent(id);
     res.json({ success: true, message: 'Event deleted' });
   } catch (err) {
@@ -199,9 +231,12 @@ export async function adminDeleteEvent(req: Request, res: Response, next: NextFu
   }
 }
 
-export async function adminRestoreEvent(req: Request, res: Response, next: NextFunction) {
+export async function adminRestoreEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const id = parseInt(req.params.id, 10);
+    const existing = await eventRepository.getEventById(id);
+    if (!existing) throw new AppError('Event not found', 404);
+    enforceEventOrgAccess(req, existing);
     await eventService.restoreEvent(id);
     res.json({ success: true, message: 'Event restored' });
   } catch (err) {
@@ -209,9 +244,12 @@ export async function adminRestoreEvent(req: Request, res: Response, next: NextF
   }
 }
 
-export async function adminPublishEvent(req: Request, res: Response, next: NextFunction) {
+export async function adminPublishEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const id = parseInt(req.params.id, 10);
+    const existing = await eventRepository.getEventById(id);
+    if (!existing) throw new AppError('Event not found', 404);
+    enforceEventOrgAccess(req, existing);
     const result = await eventService.publishEvent(id);
     res.json({ success: true, data: result.event });
   } catch (err) {
@@ -219,9 +257,12 @@ export async function adminPublishEvent(req: Request, res: Response, next: NextF
   }
 }
 
-export async function adminHideEvent(req: Request, res: Response, next: NextFunction) {
+export async function adminHideEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const id = parseInt(req.params.id, 10);
+    const existing = await eventRepository.getEventById(id);
+    if (!existing) throw new AppError('Event not found', 404);
+    enforceEventOrgAccess(req, existing);
     await eventService.hideEvent(id);
     res.json({ success: true, message: 'Event hidden' });
   } catch (err) {
@@ -229,9 +270,12 @@ export async function adminHideEvent(req: Request, res: Response, next: NextFunc
   }
 }
 
-export async function adminCancelEvent(req: Request, res: Response, next: NextFunction) {
+export async function adminCancelEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const id = parseInt(req.params.id, 10);
+    const existing = await eventRepository.getEventById(id);
+    if (!existing) throw new AppError('Event not found', 404);
+    enforceEventOrgAccess(req, existing);
     await eventService.cancelEvent(id);
     res.json({ success: true, message: 'Event cancelled' });
   } catch (err) {
@@ -239,9 +283,12 @@ export async function adminCancelEvent(req: Request, res: Response, next: NextFu
   }
 }
 
-export async function adminSetFeatured(req: Request, res: Response, next: NextFunction) {
+export async function adminSetFeatured(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const id = parseInt(req.params.id, 10);
+    const existing = await eventRepository.getEventById(id);
+    if (!existing) throw new AppError('Event not found', 404);
+    enforceEventOrgAccess(req, existing);
     const { is_featured } = req.body;
     await eventService.setFeatured(id, Boolean(is_featured));
     res.json({ success: true, message: 'Featured flag updated' });

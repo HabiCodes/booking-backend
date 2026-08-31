@@ -47,38 +47,48 @@ export class ShowtimeRepository {
 
   async findByMovie(
     movieId: number,
-    query: { page?: number; pageSize?: number } = {}
+    query: { page?: number; pageSize?: number; organizationId?: number | null } = {}
   ): Promise<PaginatedResult<ShowtimeRow>> {
     const page = query.page || 1;
     const pageSize = Math.min(query.pageSize || 25, 100);
     const offset = (page - 1) * pageSize;
+    const whereParts = ['s.movie_id = $1', 's.deleted_at IS NULL'];
+    const params: unknown[] = [movieId];
+    let idx = 2;
+    if (query.organizationId != null) { whereParts.push(`c.organization_id = $${idx++}`); params.push(query.organizationId); }
+    const where = whereParts.join(' AND ');
     const { rows: countRows } = await getPool().query(
-      'SELECT COUNT(*) as total FROM showtimes WHERE movie_id = $1 AND deleted_at IS NULL',
-      [movieId]
+      `SELECT COUNT(*) as total FROM showtimes s INNER JOIN cinemas c ON c.id = s.cinema_id WHERE ${where}`,
+      params
     );
     const total = Number((countRows as Array<{ total: number | string }>)[0]?.total ?? 0);
     const { rows } = await getPool().query(
-      'SELECT * FROM showtimes WHERE movie_id = $1 AND deleted_at IS NULL ORDER BY show_datetime LIMIT $2 OFFSET $3',
-      [movieId, pageSize, offset]
+      `SELECT s.* FROM showtimes s INNER JOIN cinemas c ON c.id = s.cinema_id WHERE ${where} ORDER BY s.show_datetime LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, pageSize, offset]
     );
     return { items: rows as unknown as ShowtimeRow[], total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
   }
 
   async findByCinema(
     cinemaId: number,
-    query: { page?: number; pageSize?: number } = {}
+    query: { page?: number; pageSize?: number; organizationId?: number | null } = {}
   ): Promise<PaginatedResult<ShowtimeRow>> {
     const page = query.page || 1;
     const pageSize = Math.min(query.pageSize || 25, 100);
     const offset = (page - 1) * pageSize;
+    const whereParts = ['cinema_id = $1', 'deleted_at IS NULL'];
+    const params: unknown[] = [cinemaId];
+    let idx = 2;
+    if (query.organizationId != null) { whereParts.push(`organization_id = $${idx++}`); params.push(query.organizationId); }
+    const where = whereParts.join(' AND ');
     const { rows: countRows } = await getPool().query(
-      'SELECT COUNT(*) as total FROM showtimes WHERE cinema_id = $1 AND deleted_at IS NULL',
-      [cinemaId]
+      `SELECT COUNT(*) as total FROM showtimes WHERE ${where}`,
+      params
     );
     const total = Number((countRows as Array<{ total: number | string }>)[0]?.total ?? 0);
     const { rows } = await getPool().query(
-      'SELECT * FROM showtimes WHERE cinema_id = $1 AND deleted_at IS NULL ORDER BY show_datetime LIMIT $2 OFFSET $3',
-      [cinemaId, pageSize, offset]
+      `SELECT * FROM showtimes WHERE ${where} ORDER BY show_datetime LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, pageSize, offset]
     );
     return { items: rows as unknown as ShowtimeRow[], total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
   }
@@ -108,7 +118,7 @@ export class ShowtimeRepository {
   }
 
   async findUpcoming(
-    query: { movieId?: number; cinemaId?: number; page?: number; pageSize?: number } = {}
+    query: { movieId?: number; cinemaId?: number; page?: number; pageSize?: number; organizationId?: number | null } = {}
   ): Promise<PaginatedResult<ShowtimeRow>> {
     const page = query.page || 1;
     const pageSize = Math.min(query.pageSize || 25, 100);
@@ -118,6 +128,10 @@ export class ShowtimeRepository {
     let idx = 1;
     if (query.movieId) { whereClauses.push(`movie_id = $${idx++}`); params.push(query.movieId); }
     if (query.cinemaId) { whereClauses.push(`cinema_id = $${idx++}`); params.push(query.cinemaId); }
+    if (query.organizationId != null) {
+      whereClauses.push(`organization_id = $${idx++}`);
+      params.push(query.organizationId);
+    }
     const where = whereClauses.join(' AND ');
     const { rows: countRows } = await getPool().query(
       `SELECT COUNT(*) as total FROM showtimes WHERE ${where}`, params

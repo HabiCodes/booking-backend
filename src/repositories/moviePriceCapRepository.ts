@@ -122,6 +122,14 @@ export class MoviePriceCapRepository {
     return (rows as unknown as MoviePriceCapRow[])[0] || null;
   }
 
+  async findById(id: number): Promise<(MoviePriceCapRow & { organization_id: number | null }) | null> {
+    const { rows } = await getPool().query(
+      'SELECT * FROM movie_price_caps WHERE id = $1 LIMIT 1',
+      [id]
+    );
+    return (rows as unknown as MoviePriceCapRow[])[0] || null;
+  }
+
   async softDelete(id: number): Promise<void> {
     await getPool().query('UPDATE movie_price_caps SET is_active = false, updated_at = NOW() WHERE id = $1', [id]);
   }

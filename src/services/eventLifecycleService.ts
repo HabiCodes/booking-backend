@@ -103,11 +103,14 @@ export class EventLifecycleService {
   /**
    * Apply a state transition + persist the resulting history row in a
    * single transaction.
+   * @param organizationId - If provided, the event's organization_id must match.
+   *   Pass null for super_admin (no org filter). Pass a number for org-scoped admin.
    */
   async transition(
     eventId: number,
     input: EventStatusTransitionInput,
-    actor: { adminId: number | null; ip?: string | null; userAgent?: string | null }
+    actor: { adminId: number | null; ip?: string | null; userAgent?: string | null },
+    organizationId?: number | null
   ): Promise<TransitionResult> {
     if (!input.action) {
       throw new AppError('Action is required', 400);
@@ -119,6 +122,13 @@ export class EventLifecycleService {
       const current = await eventRepository.lockEventById(eventId, client);
       if (!current) {
         throw new AppError(`Event ${eventId} not found`, 404);
+      }
+
+      // Defense-in-depth: verify organization ownership
+      if (organizationId !== undefined && organizationId !== null) {
+        if (current.organization_id !== organizationId) {
+          throw new AppError('Not authorized for this event', 403);
+        }
       }
 
       const fromStatus = current.status;
@@ -187,47 +197,47 @@ export class EventLifecycleService {
   /**
    * Convenience helpers for each transition (used by the controller).
    */
-  async submitForReview(eventId: number, actor: { adminId: number | null }, reason?: string | null) {
-    return this.transition(eventId, { action: 'submit_for_review', reason: reason ?? null }, actor);
+  async submitForReview(eventId: number, actor: { adminId: number | null }, reason?: string | null, organizationId?: number | null) {
+    return this.transition(eventId, { action: 'submit_for_review', reason: reason ?? null }, actor, organizationId);
   }
 
-  async approveEvent(eventId: number, actor: { adminId: number | null }, reason?: string | null) {
-    return this.transition(eventId, { action: 'approve', reason: reason ?? null }, actor);
+  async approveEvent(eventId: number, actor: { adminId: number | null }, reason?: string | null, organizationId?: number | null) {
+    return this.transition(eventId, { action: 'approve', reason: reason ?? null }, actor, organizationId);
   }
 
-  async rejectEvent(eventId: number, actor: { adminId: number | null }, reason: string) {
+  async rejectEvent(eventId: number, actor: { adminId: number | null }, reason: string, organizationId?: number | null) {
     if (!reason || !reason.trim()) {
       throw new AppError('A rejection reason is required', 400);
     }
-    return this.transition(eventId, { action: 'reject', reason }, actor);
+    return this.transition(eventId, { action: 'reject', reason }, actor, organizationId);
   }
 
-  async publishEvent(eventId: number, actor: { adminId: number | null }) {
-    return this.transition(eventId, { action: 'publish' }, actor);
+  async publishEvent(eventId: number, actor: { adminId: number | null }, organizationId?: number | null) {
+    return this.transition(eventId, { action: 'publish' }, actor, organizationId);
   }
 
-  async unpublishEvent(eventId: number, actor: { adminId: number | null }) {
-    return this.transition(eventId, { action: 'unpublish' }, actor);
+  async unpublishEvent(eventId: number, actor: { adminId: number | null }, organizationId?: number | null) {
+    return this.transition(eventId, { action: 'unpublish' }, actor, organizationId);
   }
 
-  async hideEvent(eventId: number, actor: { adminId: number | null }, reason?: string | null) {
-    return this.transition(eventId, { action: 'hide', reason: reason ?? null }, actor);
+  async hideEvent(eventId: number, actor: { adminId: number | null }, reason?: string | null, organizationId?: number | null) {
+    return this.transition(eventId, { action: 'hide', reason: reason ?? null }, actor, organizationId);
   }
 
-  async showEvent(eventId: number, actor: { adminId: number | null }) {
-    return this.transition(eventId, { action: 'show' }, actor);
+  async showEvent(eventId: number, actor: { adminId: number | null }, organizationId?: number | null) {
+    return this.transition(eventId, { action: 'show' }, actor, organizationId);
   }
 
-  async archiveEvent(eventId: number, actor: { adminId: number | null }, reason?: string | null) {
-    return this.transition(eventId, { action: 'archive', reason: reason ?? null }, actor);
+  async archiveEvent(eventId: number, actor: { adminId: number | null }, reason?: string | null, organizationId?: number | null) {
+    return this.transition(eventId, { action: 'archive', reason: reason ?? null }, actor, organizationId);
   }
 
-  async restoreEvent(eventId: number, actor: { adminId: number | null }, reason?: string | null) {
-    return this.transition(eventId, { action: 'restore', reason: reason ?? null }, actor);
+  async restoreEvent(eventId: number, actor: { adminId: number | null }, reason?: string | null, organizationId?: number | null) {
+    return this.transition(eventId, { action: 'restore', reason: reason ?? null }, actor, organizationId);
   }
 
-  async cancelEvent(eventId: number, actor: { adminId: number | null }, reason?: string | null) {
-    return this.transition(eventId, { action: 'cancel', reason: reason ?? null }, actor);
+  async cancelEvent(eventId: number, actor: { adminId: number | null }, reason?: string | null, organizationId?: number | null) {
+    return this.transition(eventId, { action: 'cancel', reason: reason ?? null }, actor, organizationId);
   }
 
   // ── Reads ──────────────────────────────────────────────────────────────────

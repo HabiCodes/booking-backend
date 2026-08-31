@@ -73,20 +73,23 @@ export class MovieService {
     });
 
     let items = result.items;
+    let total = result.total;
     if (query.status === 'ended') {
       // Fetch ended movies from all organizations (no org filter on public endpoint)
       const allResult = await movieRepository.findAll(page, pageSize);
       items = allResult.items.filter((m) => m.status === 'ended');
+      total = items.length;
     } else if (query.status === 'coming_soon') {
       items = result.items.filter((m: MoviePublic) => m.status === 'coming_soon');
+      total = items.length;
     }
 
     return {
-      items: query.status === 'coming_soon' ? items : result.items,
-      total: result.total,
+      items,
+      total,
       page,
       pageSize,
-      totalPages: Math.ceil(result.total / pageSize) || 1,
+      totalPages: Math.ceil(total / pageSize) || 1,
     };
   }
 
@@ -165,6 +168,11 @@ export class MovieService {
 
   async archive(id: number): Promise<MovieRow | null> {
     return movieRepository.update(id, { status: 'ended' });
+  }
+
+  // Admin helper: fetch raw movie row for org ownership checks
+  async findById(id: number): Promise<MovieRow | null> {
+    return movieRepository.findById(id);
   }
 }
 

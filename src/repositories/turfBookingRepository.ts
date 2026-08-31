@@ -75,6 +75,42 @@ export class TurfBookingRepository {
     return { items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
   }
 
+  async findAll(filters: { status?: string; page?: number; pageSize?: number }): Promise<{ items: TurfBookingPublic[]; total: number; page: number; pageSize: number; totalPages: number }> {
+    const page = filters.page || 1;
+    const pageSize = Math.min(filters.pageSize || 20, 100);
+    const offset = (page - 1) * pageSize;
+    const where: string[] = ['b.deleted_at IS NULL'];
+    const params: unknown[] = [];
+    let idx = 1;
+    if (filters.status) { where.push(`b.status = $${idx++}`); params.push(filters.status); }
+    const whereStr = `WHERE ${where.join(' AND ')}`;
+    const { rows: countRows } = await getPool().query(`SELECT COUNT(*) FROM turf_bookings b ${whereStr}`, params);
+    const total = Number((countRows as Array<{ count: string | number }>)[0]?.count ?? 0);
+    const { rows } = await getPool().query(
+      `SELECT b.id, b.booking_reference, b.user_id, b.organization_id, b.venue_id, b.resource_id,
+              b.availability_unit_id, b.booking_type, b.quantity, b.amount, b.currency, b.status,
+              b.payment_status, b.payment_gateway_ref, b.cancellation_reason, b.cancelled_by,
+              b.cancellation_fee, b.notes, b.created_at, b.updated_at,
+              tv.name as venue_name, tr.name as resource_name, tr.category,
+              u.email as customer_email, u.username as customer_name,
+              qt.token as qr_token, qt.status as qr_status
+       FROM turf_bookings b
+       JOIN turf_venues tv ON b.venue_id = tv.id
+       JOIN turf_resources tr ON b.resource_id = tr.id
+       JOIN users u ON b.user_id = u.id
+       LEFT JOIN turf_qr_tickets qt ON qt.booking_id = b.id
+       ${whereStr}
+       ORDER BY b.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, pageSize, offset]
+    );
+    const items = (rows as any[]).map(r => ({
+      ...r,
+      amount: parseFloat(r.amount),
+      cancellation_fee: parseFloat(r.cancellation_fee),
+    }));
+    return { items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
+  }
+
   async findByOrganization(orgId: number, filters: { status?: string; page?: number; pageSize?: number }): Promise<{ items: TurfBookingPublic[]; total: number; page: number; pageSize: number; totalPages: number }> {
     const page = filters.page || 1;
     const pageSize = Math.min(filters.pageSize || 20, 100);

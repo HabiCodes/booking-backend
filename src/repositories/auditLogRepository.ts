@@ -10,6 +10,7 @@ export interface AuditLogQuery {
   action?: string;
   entityType?: string;
   entityId?: number;
+  organizationId?: number | null;
   limit?: number;
   offset?: number;
 }
@@ -21,35 +22,40 @@ export class AuditLogRepository {
     let idx = 1;
 
     if (query.adminId !== undefined) {
-      conditions.push(`admin_id = $${idx++}`);
+      conditions.push(`al.admin_id = $${idx++}`);
       params.push(query.adminId);
     }
     if (query.action) {
-      conditions.push(`action ILIKE $${idx++}`);
+      conditions.push(`al.action ILIKE $${idx++}`);
       params.push(`%${query.action}%`);
     }
     if (query.entityType) {
-      conditions.push(`entity_type = $${idx++}`);
+      conditions.push(`al.entity_type = $${idx++}`);
       params.push(query.entityType);
     }
     if (query.entityId !== undefined) {
-      conditions.push(`entity_id = $${idx++}`);
+      conditions.push(`al.entity_id = $${idx++}`);
       params.push(query.entityId);
+    }
+    // Org-scoping: filter audit logs to admins in the same organization
+    if (query.organizationId !== undefined && query.organizationId !== null) {
+      conditions.push(`al.admin_id IN (SELECT id FROM admins WHERE organization_id = $${idx++})`);
+      params.push(query.organizationId);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const { rows, rowCount } = await getPool().query(
-      `SELECT id, admin_id, action, entity_type, entity_id, metadata, ip_address, user_agent, created_at
-       FROM audit_logs
+      `SELECT al.id, al.admin_id, al.action, al.entity_type, al.entity_id, al.metadata, al.ip_address, al.user_agent, al.created_at
+       FROM audit_logs al
        ${whereClause}
-       ORDER BY created_at DESC
+       ORDER BY al.created_at DESC
        LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, query.limit ?? 50, query.offset ?? 0]
     );
 
     const totalRow = await getPool().query(
-      `SELECT COUNT(*) as total FROM audit_logs ${whereClause}`,
+      `SELECT COUNT(*) as total FROM audit_logs al ${whereClause}`,
       params
     );
 

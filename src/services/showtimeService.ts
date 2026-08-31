@@ -74,19 +74,20 @@ export class ShowtimeService {
     cinemaId?: number;
     page?: number;
     pageSize?: number;
+    organizationId?: number | null;
   }): Promise<PaginatedResult<ShowtimeRow>> {
     const page = query.page || 1;
     const pageSize = Math.min(query.pageSize || 25, 100);
 
     if (query.movieId) {
-      const result = await showtimeRepository.findByMovie(query.movieId, { page, pageSize });
+      const result = await showtimeRepository.findByMovie(query.movieId, { page, pageSize, organizationId: query.organizationId });
       return { ...result, page, pageSize, totalPages: Math.ceil(result.total / pageSize) || 1 };
     }
     if (query.cinemaId) {
-      const result = await showtimeRepository.findByCinema(query.cinemaId, { page, pageSize });
+      const result = await showtimeRepository.findByCinema(query.cinemaId, { page, pageSize, organizationId: query.organizationId });
       return { ...result, page, pageSize, totalPages: Math.ceil(result.total / pageSize) || 1 };
     }
-    const result = await showtimeRepository.findUpcoming({ page, pageSize });
+    const result = await showtimeRepository.findUpcoming({ page, pageSize, organizationId: query.organizationId });
     return { ...result, page, pageSize, totalPages: Math.ceil(result.total / pageSize) || 1 };
   }
 
@@ -107,19 +108,28 @@ export class ShowtimeService {
     return result.items;
   }
 
-  async listByMovie(movieId: number): Promise<ShowtimeRow[]> {
-    const result = await showtimeRepository.findByMovie(movieId);
+  async listByMovie(movieId: number, organizationId?: number | null): Promise<ShowtimeRow[]> {
+    const result = await showtimeRepository.findByMovie(movieId, { organizationId });
     return result.items;
   }
 
-  async getStats() {
+  async getStats(organizationId?: number | null) {
+    const whereClauses: string[] = ['deleted_at IS NULL'];
+    const params: unknown[] = [];
+    let idx = 1;
+    if (organizationId != null) {
+      whereClauses.push(`organization_id = $${idx++}`);
+      params.push(organizationId);
+    }
+    const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
     const result = await getPool().query(
       `SELECT
         COUNT(*) as total,
         COUNT(CASE WHEN status = 'on_sale' THEN 1 END) as on_sale,
         COUNT(CASE WHEN status = 'scheduled' THEN 1 END) as scheduled,
         COUNT(CASE WHEN status = 'ended' THEN 1 END) as ended
-       FROM showtimes WHERE deleted_at IS NULL`
+       FROM showtimes ${where}`,
+      params
     );
     return (result.rows as Array<Record<string, unknown>>)[0];
   }

@@ -85,10 +85,22 @@ export class CinemaService {
 
   // ── Admin ───────────────────────────────────────────────────────────────────
 
-  async listAll(city?: string): Promise<CinemaRow[]> {
+  async listAll(city?: string, organizationId?: number | null): Promise<CinemaRow[]> {
+    const orgId = organizationId ?? null;
     if (city) {
+      if (orgId !== null) {
+        const result = await getPool().query(
+          'SELECT * FROM cinemas WHERE deleted_at IS NULL AND organization_id = $1 AND city ILIKE $2 ORDER BY name',
+          [orgId, city]
+        );
+        return result.rows as unknown as CinemaRow[];
+      }
       const r = await cinemaRepository.findByCity(city);
       return r.items as unknown as CinemaRow[];
+    }
+    if (orgId !== null) {
+      const rows = await cinemaRepository.findByOrganization(orgId);
+      return rows;
     }
     const result = await getPool().query(
       'SELECT * FROM cinemas WHERE deleted_at IS NULL ORDER BY name'
@@ -111,6 +123,11 @@ export class CinemaService {
   async toggleActive(id: number, isActive: boolean | undefined): Promise<CinemaRow | null> {
     const status = isActive === true || isActive === undefined ? 'active' : 'inactive';
     return cinemaRepository.update(id, { status } as Parameters<typeof cinemaRepository.update>[1]);
+  }
+
+  // Admin helper: fetch raw cinema row for org ownership checks
+  async findById(id: number): Promise<CinemaRow | null> {
+    return cinemaRepository.findById(id);
   }
 
   async createScreen(cinemaId: number, input: Partial<CinemaScreenCreateInput>): Promise<CinemaScreenRow> {

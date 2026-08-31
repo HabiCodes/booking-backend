@@ -157,7 +157,7 @@ export class EventRepository {
     };
   }
 
-  async listAllEvents(query: EventListQuery): Promise<EventListResult> {
+  async listAllEvents(query: EventListQuery, organizationId?: number | null): Promise<EventListResult> {
     // Admin view — includes drafts, hidden, and soft-deleted records
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -181,6 +181,10 @@ export class EventRepository {
     }
     if (query.include_deleted !== true) {
       conditions.push('deleted_at IS NULL');
+    }
+    if (organizationId != null) {
+      params.push(organizationId);
+      conditions.push(`organization_id = $${params.length}`);
     }
 
     const pageSize = Math.min(query.pageSize ?? 50, 200);
@@ -735,16 +739,20 @@ export class EventRepository {
   /**
    * List events in pending_review status — used by the admin review queue.
    */
-  async listPendingReview(pageSize: number = 50, page: number = 1): Promise<EventListResult> {
+  async listPendingReview(pageSize: number = 50, page: number = 1, organizationId?: number | null): Promise<EventListResult> {
     const offset = (page - 1) * pageSize;
+    const orgFilter = organizationId != null ? `AND organization_id = $1` : '';
+    const params = organizationId != null ? [organizationId] : [];
     const itemsResult = await getPool().query(
       `SELECT ${PUBLIC_EVENT_COLUMNS} FROM events
-        WHERE deleted_at IS NULL AND status = 'pending_review'
+        WHERE deleted_at IS NULL AND status = 'pending_review' ${orgFilter}
         ORDER BY submitted_for_review_at ASC NULLS LAST, created_at ASC
-        LIMIT ${pageSize} OFFSET ${offset}`
+        LIMIT ${pageSize} OFFSET ${offset}`,
+      params
     );
     const countResult = await getPool().query(
-      `SELECT COUNT(*) AS total FROM events WHERE deleted_at IS NULL AND status = 'pending_review'`
+      `SELECT COUNT(*) AS total FROM events WHERE deleted_at IS NULL AND status = 'pending_review' ${orgFilter}`,
+      params
     );
     const total = parseInt(String((countResult.rows as Array<{ total: number | string }>)[0]?.total ?? 0), 10);
     return {

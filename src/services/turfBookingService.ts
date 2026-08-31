@@ -345,8 +345,10 @@ export class TurfBookingService {
       // ── Post-Commit: Settlement ───────────────────────────────────────────
       await this._createSettlement(booking.id, booking.organization_id, parseFloat(booking.amount));
 
-      // ── Post-Commit: Wallet Coins ─────────────────────────────────────────
-      this._awardCoins(booking.user_id, booking.organization_id, parseFloat(booking.amount), booking.id);
+      // ── Post-Commit: Wallet Coins (fire-and-forget, errors logged) ──────────
+      this._awardCoins(booking.user_id, booking.organization_id, parseFloat(booking.amount), booking.id).catch(
+        (err) => logger.error(`[TurfWallet] Coin award failed for booking ${bookingId}:`, err)
+      );
 
       await audit(bookingId, 'booking.confirmed', {
         actorId: actor.actorId, actorType: actor.actorType,
@@ -773,25 +775,29 @@ export class TurfBookingService {
 
   // ── Private: Wallet Coins ──────────────────────────────────────────────────
 
-  private _awardCoins(userId: number, orgId: number, amount: number, bookingId: number) {
+  /**
+   * Award wallet coins for a confirmed turf booking. This is fire-and-forget
+   * and must NOT block the booking-confirmed response. Errors are propagated
+   * as a rejected promise so the caller can attach a logger catch.
+   */
+  private async _awardCoins(userId: number, orgId: number, amount: number, bookingId: number): Promise<void> {
     const coins = Math.floor(amount);
     if (coins <= 0) return;
 
     // Compute actual balance_after for audit accuracy
-    turfWalletRepository.getBalance(userId).then(balance => {
-      const balanceAfter = balance + coins;
-      return turfWalletRepository.create({
-        user_id: userId,
-        organization_id: orgId,
-        coins,
-        balance_after: balanceAfter,
-        type: 'earn',
-        category: 'per_booking',
-        booking_id: bookingId,
-        description: `Earned ${coins} coins from booking`,
-        actor_type: 'system',
-      });
-    }).catch(err => logger.error(`[TurfWallet] Earn failed for booking ${bookingId}:`, err));
+    const balance = await turfWalletRepository.getBalance(userId);
+    const balanceAfter = balance + coins;
+    await turfWalletRepository.create({
+      user_id: userId,
+      organization_id: orgId,
+      coins,
+      balance_after: balanceAfter,
+      type: 'earn',
+      category: 'per_booking',
+      booking_id: bookingId,
+      description: `Earned ${coins} coins from booking`,
+      actor_type: 'system',
+    });
   }
 }
 

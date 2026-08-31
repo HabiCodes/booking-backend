@@ -48,9 +48,13 @@ CREATE TABLE IF NOT EXISTS event_zones (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-  CONSTRAINT uq_event_zone_name UNIQUE (event_id, name) WHERE deleted_at IS NULL
+  
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_event_zone_name
+  ON event_zones (event_id, name)
+  WHERE deleted_at IS NULL;
+  
 CREATE INDEX IF NOT EXISTS idx_event_zones_event
   ON event_zones (event_id) WHERE deleted_at IS NULL;
 

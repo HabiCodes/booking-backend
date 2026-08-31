@@ -56,23 +56,32 @@ export async function listAllBookings(req: Request, res: Response, next: NextFun
 
     // Org-scoped admins (role='manager' OR organizationId set) MUST only see their own org.
     // Super-admins (organizationId=null) can specify any org via query string.
-    let orgId: number;
+    let result;
     if (admin?.organizationId != null) {
       // If an org-scoped admin passes a query param, only allow their own org — reject others.
       if (queryOrgId !== 0 && queryOrgId !== admin.organizationId) {
         throw new AppError('Forbidden — cannot access other organization bookings', 403);
       }
-      orgId = admin.organizationId;
+      result = await turfBookingRepository.findByOrganization(admin.organizationId, {
+        status: req.query.status as string,
+        page: Number(req.query.page) || 1,
+        pageSize: Number(req.query.pageSize) || 25,
+      });
+    } else if (queryOrgId !== 0) {
+      // Super-admin explicitly filtering by organization
+      result = await turfBookingRepository.findByOrganization(queryOrgId, {
+        status: req.query.status as string,
+        page: Number(req.query.page) || 1,
+        pageSize: Number(req.query.pageSize) || 25,
+      });
     } else {
-      // Super-admin: 0 means "all orgs"
-      orgId = queryOrgId;
+      // Super-admin, no org filter — use findAll() which omits the WHERE org_id = 0 clause
+      result = await turfBookingRepository.findAll({
+        status: req.query.status as string,
+        page: Number(req.query.page) || 1,
+        pageSize: Number(req.query.pageSize) || 25,
+      });
     }
-
-    const result = await turfBookingRepository.findByOrganization(orgId, {
-      status: req.query.status as string,
-      page: Number(req.query.page) || 1,
-      pageSize: Number(req.query.pageSize) || 25,
-    });
     res.json({ success: true, data: result });
   } catch (err) { next(err); }
 }

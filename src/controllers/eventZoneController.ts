@@ -13,6 +13,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../middleware/errorHandler';
 import { eventZoneService } from '../services/eventZoneService';
+import { eventRepository } from '../repositories/eventRepository';
+import type { AdminRequest } from '../middleware/adminAuth';
 import type { EventZoneCreateInput, EventZoneUpdateInput } from '../types';
 
 // ── Public reads ──────────────────────────────────────────────────────────────
@@ -43,10 +45,18 @@ export async function getZone(req: Request, res: Response, next: NextFunction): 
 
 // ── Admin writes ──────────────────────────────────────────────────────────────
 
-export async function adminCreateZone(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function adminCreateZone(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const eventId = parseInt(req.params.id, 10);
     if (!eventId || isNaN(eventId)) throw new AppError('Invalid event ID', 400);
+
+    // Verify org ownership for the event
+    const event = await eventRepository.getEventById(eventId);
+    if (!event) throw new AppError('Event not found', 404);
+    const adminOrgId = req.admin?.organizationId ?? null;
+    if (adminOrgId !== null && event.organization_id !== adminOrgId) {
+      throw new AppError('Not authorized to add zones to this event', 403);
+    }
 
     const body = req.body || {};
     if (!body.name || typeof body.name !== 'string' || body.name.trim().length === 0) {
@@ -76,10 +86,18 @@ export async function adminCreateZone(req: Request, res: Response, next: NextFun
   }
 }
 
-export async function adminUpdateZone(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function adminUpdateZone(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const zoneId = parseInt(req.params.zoneId, 10);
     if (!zoneId || isNaN(zoneId)) throw new AppError('Invalid zone ID', 400);
+
+    const fetchedZone = await eventZoneService.getZone(zoneId);
+    const evt = await eventRepository.getEventById(fetchedZone.event_id);
+    if (!evt) throw new AppError('Event not found for this zone', 404);
+    const adminOrgId = req.admin?.organizationId ?? null;
+    if (adminOrgId !== null && evt.organization_id !== adminOrgId) {
+      throw new AppError('Not authorized to modify this zone', 403);
+    }
 
     const body = req.body || {};
     const input: EventZoneUpdateInput = {};
@@ -91,17 +109,26 @@ export async function adminUpdateZone(req: Request, res: Response, next: NextFun
     if (body.is_active !== undefined) input.is_active = body.is_active;
     if (body.sort_order !== undefined) input.sort_order = body.sort_order;
 
-    const zone = await eventZoneService.updateZone(zoneId, input);
-    res.json({ zone });
+    const updatedZone = await eventZoneService.updateZone(zoneId, input);
+    res.json({ zone: updatedZone });
   } catch (err) {
     next(err);
   }
 }
 
-export async function adminDeleteZone(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function adminDeleteZone(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const zoneId = parseInt(req.params.zoneId, 10);
     if (!zoneId || isNaN(zoneId)) throw new AppError('Invalid zone ID', 400);
+
+    // Verify the admin has access to the zone's event's organization
+    const zone = await eventZoneService.getZone(zoneId);
+    const event = await eventRepository.getEventById(zone.event_id);
+    if (!event) throw new AppError('Event not found for this zone', 404);
+    const adminOrgId = req.admin?.organizationId ?? null;
+    if (adminOrgId !== null && event.organization_id !== adminOrgId) {
+      throw new AppError('Not authorized to delete this zone', 403);
+    }
 
     await eventZoneService.deleteZone(zoneId);
     res.json({ success: true });
@@ -110,10 +137,18 @@ export async function adminDeleteZone(req: Request, res: Response, next: NextFun
   }
 }
 
-export async function adminGetAvailability(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function adminGetAvailability(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const eventId = parseInt(req.params.id, 10);
     if (!eventId || isNaN(eventId)) throw new AppError('Invalid event ID', 400);
+
+    // Verify org ownership for the event
+    const event = await eventRepository.getEventById(eventId);
+    if (!event) throw new AppError('Event not found', 404);
+    const adminOrgId = req.admin?.organizationId ?? null;
+    if (adminOrgId !== null && event.organization_id !== adminOrgId) {
+      throw new AppError('Not authorized to view this event\'s zones', 403);
+    }
 
     const availability = await eventZoneService.getZoneAvailability(eventId);
     res.json({ zones: availability });

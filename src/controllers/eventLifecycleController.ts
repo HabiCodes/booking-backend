@@ -29,6 +29,17 @@ function eventIdParam(req: Request): number {
   return id;
 }
 
+function checkEventOrg(req: AdminRequest, eventId: number): Promise<void> {
+  const adminOrgId = req.admin?.organizationId ?? null;
+  if (adminOrgId === null) return Promise.resolve(); // super_admin
+  return eventRepository.getEventById(eventId).then(event => {
+    if (!event) throw new AppError('Event not found', 404);
+    if (event.organization_id !== adminOrgId) {
+      throw new AppError('Not authorized to access this event', 403);
+    }
+  });
+}
+
 function actor(req: AdminRequest) {
   return {
     adminId: req.admin?.id ?? null,
@@ -42,11 +53,16 @@ function actor(req: AdminRequest) {
 // applies the transition + side-effects in a single transaction, and appends
 // the history row.
 
+function orgIdFromReq(req: AdminRequest): number | null {
+  return req.admin?.organizationId ?? null;
+}
+
 export async function submitForReview(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
+    await checkEventOrg(req, eventId);
     const body = (req.body ?? {}) as { reason?: string | null };
-    const { event } = await eventLifecycleService.submitForReview(eventId, actor(req), body.reason);
+    const { event } = await eventLifecycleService.submitForReview(eventId, actor(req), body.reason, orgIdFromReq(req));
     res.json({ success: true, data: event });
   } catch (err) {
     next(err);
@@ -56,7 +72,8 @@ export async function submitForReview(req: AdminRequest, res: Response, next: Ne
 export async function approveEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
-    const { event } = await eventLifecycleService.approveEvent(eventId, actor(req));
+    await checkEventOrg(req, eventId);
+    const { event } = await eventLifecycleService.approveEvent(eventId, actor(req), undefined, orgIdFromReq(req));
     res.json({ success: true, data: event });
   } catch (err) {
     next(err);
@@ -66,11 +83,12 @@ export async function approveEvent(req: AdminRequest, res: Response, next: NextF
 export async function rejectEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
+    await checkEventOrg(req, eventId);
     const body = (req.body ?? {}) as { reason?: string };
     if (!body.reason?.trim()) {
       throw new AppError('rejection reason is required', 400);
     }
-    const { event } = await eventLifecycleService.rejectEvent(eventId, actor(req), body.reason);
+    const { event } = await eventLifecycleService.rejectEvent(eventId, actor(req), body.reason, orgIdFromReq(req));
     res.json({ success: true, data: event });
   } catch (err) {
     next(err);
@@ -80,7 +98,8 @@ export async function rejectEvent(req: AdminRequest, res: Response, next: NextFu
 export async function publishEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
-    const { event } = await eventLifecycleService.publishEvent(eventId, actor(req));
+    await checkEventOrg(req, eventId);
+    const { event } = await eventLifecycleService.publishEvent(eventId, actor(req), orgIdFromReq(req));
     res.json({ success: true, data: event });
   } catch (err) {
     next(err);
@@ -90,7 +109,8 @@ export async function publishEvent(req: AdminRequest, res: Response, next: NextF
 export async function unpublishEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
-    const { event } = await eventLifecycleService.unpublishEvent(eventId, actor(req));
+    await checkEventOrg(req, eventId);
+    const { event } = await eventLifecycleService.unpublishEvent(eventId, actor(req), orgIdFromReq(req));
     res.json({ success: true, data: event });
   } catch (err) {
     next(err);
@@ -100,8 +120,9 @@ export async function unpublishEvent(req: AdminRequest, res: Response, next: Nex
 export async function hideEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
+    await checkEventOrg(req, eventId);
     const body = (req.body ?? {}) as { reason?: string | null };
-    const { event } = await eventLifecycleService.hideEvent(eventId, actor(req), body.reason);
+    const { event } = await eventLifecycleService.hideEvent(eventId, actor(req), body.reason, orgIdFromReq(req));
     res.json({ success: true, data: event });
   } catch (err) {
     next(err);
@@ -111,7 +132,8 @@ export async function hideEvent(req: AdminRequest, res: Response, next: NextFunc
 export async function showEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
-    const { event } = await eventLifecycleService.showEvent(eventId, actor(req));
+    await checkEventOrg(req, eventId);
+    const { event } = await eventLifecycleService.showEvent(eventId, actor(req), orgIdFromReq(req));
     res.json({ success: true, data: event });
   } catch (err) {
     next(err);
@@ -121,8 +143,9 @@ export async function showEvent(req: AdminRequest, res: Response, next: NextFunc
 export async function archiveEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
+    await checkEventOrg(req, eventId);
     const body = (req.body ?? {}) as { reason?: string | null };
-    const { event } = await eventLifecycleService.archiveEvent(eventId, actor(req), body.reason);
+    const { event } = await eventLifecycleService.archiveEvent(eventId, actor(req), body.reason, orgIdFromReq(req));
     res.json({ success: true, data: event });
   } catch (err) {
     next(err);
@@ -132,8 +155,9 @@ export async function archiveEvent(req: AdminRequest, res: Response, next: NextF
 export async function restoreEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
+    await checkEventOrg(req, eventId);
     const body = (req.body ?? {}) as { reason?: string | null };
-    const { event } = await eventLifecycleService.restoreEvent(eventId, actor(req), body.reason);
+    const { event } = await eventLifecycleService.restoreEvent(eventId, actor(req), body.reason, orgIdFromReq(req));
     res.json({ success: true, data: event });
   } catch (err) {
     next(err);
@@ -143,8 +167,9 @@ export async function restoreEvent(req: AdminRequest, res: Response, next: NextF
 export async function cancelEvent(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
+    await checkEventOrg(req, eventId);
     const body = (req.body ?? {}) as { reason?: string | null };
-    const { event } = await eventLifecycleService.cancelEvent(eventId, actor(req), body.reason);
+    const { event } = await eventLifecycleService.cancelEvent(eventId, actor(req), body.reason, orgIdFromReq(req));
     res.json({ success: true, data: event });
   } catch (err) {
     next(err);
@@ -156,6 +181,7 @@ export async function cancelEvent(req: AdminRequest, res: Response, next: NextFu
 export async function getEventHistory(req: AdminRequest, res: Response, next: NextFunction) {
   try {
     const eventId = eventIdParam(req);
+    await checkEventOrg(req, eventId);
     const history = await eventLifecycleService.getHistory(eventId);
     res.json({ success: true, data: history });
   } catch (err) {
@@ -171,9 +197,10 @@ export async function listPendingReview(
   next: NextFunction
 ) {
   try {
+    const adminOrgId = req.admin?.organizationId ?? null;
     const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 50;
     const page = req.query.page ? Number(req.query.page) : 1;
-    const result = await eventRepository.listPendingReview(pageSize, page);
+    const result = await eventRepository.listPendingReview(pageSize, page, adminOrgId);
     res.json({
       success: true,
       data: result.items,

@@ -24,8 +24,8 @@ export class EventService {
     return eventRepository.listPublicEvents(query);
   }
 
-  async listAllEvents(query: EventListQuery): Promise<EventListResult> {
-    return eventRepository.listAllEvents(query);
+  async listAllEvents(query: EventListQuery, organizationId?: number | null): Promise<EventListResult> {
+    return eventRepository.listAllEvents(query, organizationId);
   }
 
   async listFeaturedEvents(limit: number = 5): Promise<EventRow[]> {
