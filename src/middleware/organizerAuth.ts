@@ -27,6 +27,7 @@ export interface OrganizerRequest extends Request {
     name: string;
     role: 'owner' | 'manager';
     permissions: Record<string, boolean>;
+    assignedVenueIds?: number[];
     jti?: string;
   };
 }
@@ -34,17 +35,17 @@ export interface OrganizerRequest extends Request {
 const REDIS_REVOCATION_PREFIX = 'org_revoked';
 const JWT_TTL_SECONDS = 8 * 3600; // matches ORGANIZER_JWT_EXPIRES_IN default of 8h
 
-async function verifyOrganizerIsActive(userId: number): Promise<boolean> {
+async function verifyOrganizerIsActive(userId: number): Promise<{ active: boolean; assignedVenueIds: number[] }> {
   try {
     const { rows } = await getPool().query(
-      'SELECT is_active FROM organizer_users WHERE id = $1 LIMIT 1',
+      'SELECT is_active, assigned_venue_ids FROM organizer_users WHERE id = $1 LIMIT 1',
       [userId]
     );
-    const row = (rows as Array<{ is_active: boolean }>)[0];
-    if (!row) return false;
-    return row.is_active;
+    const row = (rows as Array<{ is_active: boolean; assigned_venue_ids: number[] | null }>)[0];
+    if (!row) return { active: false, assignedVenueIds: [] };
+    return { active: row.is_active, assignedVenueIds: row.assigned_venue_ids || [] };
   } catch {
-    return false; // fail closed — DB error means we cannot verify, deny access
+    return { active: false, assignedVenueIds: [] };
   }
 }
 
@@ -118,13 +119,16 @@ export async function organizerAuthMiddleware(
       return next(new AppError('Session has been revoked — please log in again', 401));
     }
 
-    // Verify organizer user is still active in DB
-    const isActive = await verifyOrganizerIsActive(payload.id);
-    if (!isActive) {
+    // Verify organizer user is still active in DB + load venue assignments
+    const { active, assignedVenueIds } = await verifyOrganizerIsActive(payload.id);
+    if (!active) {
       return next(new AppError('Organizer account has been deactivated', 401));
     }
 
-    req.organizerUser = payload;
+    req.organizerUser = {
+      ...payload,
+      assignedVenueIds,
+    };
     next();
   } catch {
     // Catches: verifyOrganizerAccessToken returning null, isSessionRevoked rejecting,

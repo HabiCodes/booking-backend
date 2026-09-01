@@ -211,6 +211,11 @@ router.post('/managers/:id/reset-password', requireOwner, async (req: OrganizerR
     const passwordHash = await hashPassword(tempPassword);
     await organizerUserRepository.setPassword(managerId, passwordHash, true);
 
+    // Revoke all existing sessions so the old JWT is invalidated immediately
+    await revokeOrganizerSessionsRedis(managerId);
+    await organizerRefreshTokenRepository.revokeAllUserRefreshTokens(managerId);
+    await organizerRefreshTokenRepository.revokeAllUserSessions(managerId);
+
     await audit(req, 'manager.reset_password', 'manager', managerId, { email: manager.email });
 
     res.json({ success: true, temp_password: tempPassword });
@@ -244,6 +249,11 @@ router.delete('/managers/:id', requireOwner, async (req: OrganizerRequest, res: 
       phone: null,
       is_active: false,
     });
+
+    // Revoke all active sessions so existing JWTs are invalidated
+    await revokeOrganizerSessionsRedis(managerId);
+    await organizerRefreshTokenRepository.revokeAllUserRefreshTokens(managerId);
+    await organizerRefreshTokenRepository.revokeAllUserSessions(managerId);
 
     await audit(req, 'manager.delete', 'manager', managerId, { email: manager.email });
 

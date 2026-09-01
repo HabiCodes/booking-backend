@@ -101,7 +101,10 @@ export const ROLE_DEFAULTS: Record<string, Set<AdminPermission>> = {
 };
 
 export function computePermissions(role: string, overrides: Record<string, boolean> | null | undefined): Record<string, boolean> {
-  const defaults = ROLE_DEFAULTS[role] ?? ROLE_DEFAULTS['event_manager'];
+  // SECURITY: deny by default when the role is unrecognized. Never fall through
+  // to event_manager / movie_manager / turf_manager defaults based on a DB role
+  // we cannot map — that would silently grant wrong-domain permissions.
+  const defaults = ROLE_DEFAULTS[role] ?? EMPTY_PERMISSION_SET;
   const result: Record<string, boolean> = {};
   for (const p of PERMISSIONS) {
     const overrideVal = overrides?.[p];
@@ -109,6 +112,8 @@ export function computePermissions(role: string, overrides: Record<string, boole
   }
   return result;
 }
+
+const EMPTY_PERMISSION_SET: Set<AdminPermission> = new Set();
 
 export function hasAllPermissions(perms: Record<string, boolean> | undefined, required: readonly string[]): boolean {
   if (!perms) return false;

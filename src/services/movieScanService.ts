@@ -128,7 +128,7 @@ export class MovieScanService {
     const sigResult = verifyTicketSignature(
       { ticket_uuid: ticket.ticket_uuid },
       ticket.showtime_id,
-      '',
+      ticket.show_datetime,
       ticket.signature
     );
 
@@ -197,7 +197,7 @@ export class MovieScanService {
     const sigResult = verifyTicketSignature(
       { ticket_uuid: ticket.ticket_uuid },
       ticket.showtime_id,
-      '',
+      ticket.show_datetime,
       ticket.signature
     );
     if (!sigResult.valid) {

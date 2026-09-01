@@ -138,14 +138,14 @@ export class OrganizerInvitationService {
       password: userData.password,
       role: 'manager',
       permissions: {
-        movies_read: true,
-        movies_write: false,
-        cinemas_read: true,
-        cinemas_write: false,
-        showtimes_read: true,
-        showtimes_write: false,
-        price_caps_read: true,
-        price_caps_write: false,
+        'organizer:movies:read': true,
+        'organizer:movies:write': false,
+        'organizer:cinemas:read': true,
+        'organizer:cinemas:write': false,
+        'organizer:showtimes:read': true,
+        'organizer:showtimes:write': false,
+        'organizer:price_caps:read': true,
+        'organizer:price_caps:write': false,
       },
     });
 

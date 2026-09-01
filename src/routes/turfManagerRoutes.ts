@@ -8,6 +8,7 @@ import { Router } from 'express';
 import { organizerAuthMiddleware } from '../middleware/organizerAuth';
 import { requireOrganizerPermission } from '../middleware/organizerPermissions';
 import { organizerWriteRateLimiter } from '../middleware/rateLimiter';
+import { enforceVenueAccess } from '../middleware/venueAccess';
 import crypto from "crypto";
 import { AppError } from '../middleware/errorHandler';
 import { turfBookingService } from '../services/turfBookingService';
@@ -35,7 +36,7 @@ const withWriteRate = (handler: OrganizerHandler): OrganizerHandler[] =>
 
 router.post('/organizations/:organizationId/offline-booking',
   requireOrganizerPermission('organizer:offline_bookings:write'),
-  async (req, res, next) => {
+  async (req: any, res: any, next: any) => {
     try {
       const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
@@ -64,6 +65,9 @@ router.post('/organizations/:organizationId/offline-booking',
 
       const venue = await turfVenueRepository.findById(resource.venue_id);
       if (!venue || venue.organization_id !== orgId) throw new AppError('Venue not in your organization', 403);
+
+      // Enforce assigned_venue_ids boundary
+      enforceVenueAccess((req as any).organizerUser?.assignedVenueIds || [], venue.id);
 
       // Find or create customer user
       let customerRows = await getPool().query('SELECT * FROM users WHERE phone = $1', [customerPhone]);
@@ -163,6 +167,12 @@ router.post('/organizations/:organizationId/validate-qr',
         return res.status(403).json({ success: true, data: { valid: false, reason: 'This booking does not belong to your organization' } });
       }
 
+      // Enforce assigned_venue_ids boundary
+      try { enforceVenueAccess((req as any).organizerUser.assignedVenueIds || [], booking.venue_id); }
+      catch (venueErr) {
+        return res.status(403).json({ success: true, data: { valid: false, reason: (venueErr as AppError).message } });
+      }
+
       // Verify HMAC signature on the QR ticket
       let qrDataPayload: { ticket?: string; slot?: string; venue?: number } | null = null;
       if (qr.qr_data) {
@@ -225,7 +235,7 @@ router.post('/organizations/:organizationId/validate-qr',
 
 router.post('/organizations/:organizationId/bookings/:bookingId/cancel',
   requireOrganizerPermission('organizer:bookings:cancel'),
-  async (req, res, next) => {
+  async (req: any, res: any, next: any) => {
     try {
       const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
@@ -245,6 +255,9 @@ router.post('/organizations/:organizationId/bookings/:bookingId/cancel',
       if (!booking) throw new AppError('Booking not found', 404);
       if (booking.organization_id !== orgId) throw new AppError('Booking not in your organization', 403);
 
+      // Enforce assigned_venue_ids boundary
+      enforceVenueAccess((req as any).organizerUser.assignedVenueIds || [], booking.venue_id);
+
       const cancelled = await turfBookingService.cancelBooking(bookingId, booking.user_id, reason || 'Cancelled by manager', {
         actorId: userId,
         actorType: 'manager',
@@ -259,7 +272,7 @@ router.post('/organizations/:organizationId/bookings/:bookingId/cancel',
 
 router.get('/organizations/:organizationId/attendance',
   requireOrganizerPermission('organizer:bookings:read'),
-  async (req, res, next) => {
+  async (req: any, res: any, next: any) => {
     try {
       const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
@@ -290,6 +303,15 @@ router.get('/organizations/:organizationId/attendance',
       if (venueId) { where.push(`b.venue_id = $${idx++}`); params.push(venueId); }
       if (resourceId) { where.push(`b.resource_id = $${idx++}`); params.push(resourceId); }
 
+      // Enforce assigned_venue_ids — if manager is restricted, filter to their venues
+      const assignedVenueIds = req.organizerUser!.assignedVenueIds || [];
+      if (assignedVenueIds.length > 0) {
+        if (!venueId) { where.push(`b.venue_id = ANY($${idx++})`); params.push(assignedVenueIds); }
+        else if (!assignedVenueIds.includes(Number(venueId))) {
+          return res.json({ success: true, data: { bookings: [] } });
+        }
+      }
+
       const { rows } = await getPool().query(
         `SELECT b.id, b.booking_reference, b.booking_type, b.status, b.amount, b.created_at,
                 au.starts_at, au.ends_at,
@@ -315,8 +337,8 @@ router.get('/organizations/:organizationId/attendance',
 // ── Daily Report ─────────────────────────────────────────────────────────────
 
 router.get('/organizations/:organizationId/daily-report',
-  requireOrganizerPermission('analytics:read'),
-  async (req, res, next) => {
+  requireOrganizerPermission('organizer:analytics:read'),
+  async (req: any, res: any, next: any) => {
     try {
       const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
@@ -333,6 +355,7 @@ router.get('/organizations/:organizationId/daily-report',
       );
       if (!orgUser.rows.length) throw new AppError('You do not manage this organization', 403);
 
+      const assignedVenueIds = req.organizerUser!.assignedVenueIds || [];
       const dayStart = `${date}T00:00:00Z`;
       const dt = new Date(date + 'T00:00:00Z');
       dt.setUTCDate(dt.getUTCDate() + 1);
@@ -343,15 +366,17 @@ router.get('/organizations/:organizationId/daily-report',
           `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as revenue
            FROM turf_bookings WHERE organization_id = $1 AND booking_type = 'online'
              AND created_at >= $2 AND created_at <= $3
-             AND status NOT IN ('cancelled', 'refunded', 'expired')`,
-          [orgId, dayStart, dayEnd]
+             AND status NOT IN ('cancelled', 'refunded', 'expired')
+             ${assignedVenueIds.length > 0 ? 'AND venue_id = ANY($4)' : ''}`,
+          assignedVenueIds.length > 0 ? [orgId, dayStart, dayEnd, assignedVenueIds] : [orgId, dayStart, dayEnd]
         ),
         getPool().query(
           `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as revenue
            FROM turf_bookings WHERE organization_id = $1 AND booking_type = 'offline'
              AND created_at >= $2 AND created_at <= $3
-             AND status NOT IN ('cancelled', 'refunded', 'expired')`,
-          [orgId, dayStart, dayEnd]
+             AND status NOT IN ('cancelled', 'refunded', 'expired')
+             ${assignedVenueIds.length > 0 ? 'AND venue_id = ANY($4)' : ''}`,
+          assignedVenueIds.length > 0 ? [orgId, dayStart, dayEnd, assignedVenueIds] : [orgId, dayStart, dayEnd]
         ),
       ]);
 
@@ -371,7 +396,7 @@ router.get('/organizations/:organizationId/daily-report',
 
 router.get('/organizations/:organizationId/entry-logs',
   requireOrganizerPermission('organizer:bookings:read'),
-  async (req, res, next) => {
+  async (req: any, res: any, next: any) => {
     try {
       const userId = req.organizerUser?.id;
       if (!userId) throw new AppError('Unauthorized', 401);
@@ -389,6 +414,13 @@ router.get('/organizations/:organizationId/entry-logs',
       const where = ['b.organization_id = $1', "q.status = 'used'"];
       const params: unknown[] = [orgId];
       let idx = 2;
+
+      // Enforce assigned_venue_ids
+      const assignedVenueIds = req.organizerUser!.assignedVenueIds || [];
+      if (assignedVenueIds.length > 0) {
+        where.push(`b.venue_id = ANY($${idx++})`);
+        params.push(assignedVenueIds);
+      }
 
       if (date) {
         where.push(`q.used_at >= $${idx++}`); params.push(`${date}T00:00:00Z`);
