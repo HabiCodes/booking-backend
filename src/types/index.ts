@@ -406,7 +406,14 @@ export type AdminPermission =
   | 'organizer:scanners:delete'
   | 'organizer:price_caps:read'
   | 'organizer:price_caps:write'
-  | 'organizer:price_caps:delete';
+  | 'organizer:price_caps:delete'
+  | 'organizer:turf:read'
+  | 'organizer:turf:write'
+  | 'organizer:turf:delete'
+  | 'organizer:offline_bookings:read'
+  | 'organizer:offline_bookings:write'
+  | 'organizer:scanner_turf:read'
+  | 'organizer:scanner_turf:write';
 
 export interface AdminRow {
   id: number;
@@ -1485,7 +1492,7 @@ export type PaymentOrderStatus =
   | 'PARTIALLY_REFUNDED'
   | 'REFUNDED';
 
-export type PaymentGateway = 'federal_bank' | 'manual';
+export type PaymentGateway = 'federal_bank' | 'manual' | 'offline';
 
 export type VerificationSource = 'webhook' | 'api_poll';
 

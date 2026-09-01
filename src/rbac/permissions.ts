@@ -37,6 +37,11 @@ export const PERMISSIONS: readonly AdminPermission[] = [
   'organizer:screens:read', 'organizer:screens:write', 'organizer:screens:delete',
   'organizer:scanners:read', 'organizer:scanners:write', 'organizer:scanners:delete',
   'organizer:price_caps:read', 'organizer:price_caps:write', 'organizer:price_caps:delete',
+
+  // Turf-specific organizer permissions
+  'organizer:turf:read', 'organizer:turf:write', 'organizer:turf:delete',
+  'organizer:offline_bookings:read', 'organizer:offline_bookings:write',
+  'organizer:scanner_turf:read', 'organizer:scanner_turf:write',
 ];
 
 export const ROLE_DEFAULTS: Record<string, Set<AdminPermission>> = {
@@ -68,6 +73,30 @@ export const ROLE_DEFAULTS: Record<string, Set<AdminPermission>> = {
 
   ticket_scanner: new Set([
     'scanner:verify', 'scanner:checkin', 'events:read',
+  ]),
+
+  movie_manager: new Set([
+    'organizer:movies:read', 'organizer:movies:write',
+    'organizer:cinemas:read',
+    'organizer:screens:read', 'organizer:screens:write',
+    'organizer:showtimes:read', 'organizer:showtimes:write',
+    'organizer:price_caps:read',
+    'organizer:bookings:read', 'organizer:bookings:write',
+    'organizer:bookings:cancel',
+    'organizer:tickets:read', 'organizer:tickets:scan', 'organizer:tickets:checkin',
+    'scanner:verify', 'scanner:checkin',
+    'analytics:read',
+  ]),
+
+  turf_manager: new Set([
+    'organizer:turf:read', 'organizer:turf:write',
+    'organizer:venues:read', 'organizer:venues:write',
+    'organizer:bookings:read', 'organizer:bookings:cancel',
+    'organizer:offline_bookings:read', 'organizer:offline_bookings:write',
+    'organizer:tickets:read', 'organizer:tickets:scan', 'organizer:tickets:checkin',
+    'organizer:scanner_turf:read', 'organizer:scanner_turf:write',
+    'scanner:verify', 'scanner:checkin',
+    'analytics:read',
   ]),
 };
 

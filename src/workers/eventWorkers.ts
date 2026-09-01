@@ -12,10 +12,11 @@
 
 import { bookingService } from '../services/bookingService';
 import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
+import { eventSettlementService } from '../services/eventSettlementService';
 import { logger } from '../utils/logger';
 import { getPool } from '../db/pool';
 
-export type EventWorkerJob = 'expire-pending-payments' | 'all';
+export type EventWorkerJob = 'expire-pending-payments' | 'settlement' | 'all';
 
 const STALE_PAYMENT_PENDING_MINUTES = 30;
 
@@ -80,6 +81,17 @@ export async function runEventWorkers(job: EventWorkerJob = 'all'): Promise<void
       const expired = await expireStalePendingPayments();
       if (expired > 0) {
         logger.info(`[EventWorker] Expired ${expired} stale payment_pending bookings`);
+      }
+    }
+
+    if (job === 'settlement' || job === 'all') {
+      try {
+        const result = await eventSettlementService.processDueSettlements();
+        if (result.processed > 0) {
+          logger.info(`[EventWorker] Processed ${result.processed} settlements (${result.failed} failed)`);
+        }
+      } catch (err) {
+        logger.error(`[EventWorker] Settlement processing failed:`, err);
       }
     }
 

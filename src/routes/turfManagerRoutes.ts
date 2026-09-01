@@ -6,6 +6,9 @@
 
 import { Router } from 'express';
 import { organizerAuthMiddleware } from '../middleware/organizerAuth';
+import { requireOrganizerPermission } from '../middleware/organizerPermissions';
+import { organizerWriteRateLimiter } from '../middleware/rateLimiter';
+import crypto from "crypto";
 import { AppError } from '../middleware/errorHandler';
 import { turfBookingService } from '../services/turfBookingService';
 import { turfBookingRepository } from '../repositories/turfBookingRepository';
@@ -14,6 +17,7 @@ import { turfQRRepository } from '../repositories/turfQRRepository';
 import { turfResourceRepository } from '../repositories/turfResourceRepository';
 import { turfVenueRepository } from '../repositories/turfVenueRepository';
 import { UniversalTicketService } from '../services/universalTicketService';
+import { paymentOrderRepository } from '../repositories/paymentOrderRepository';
 import { logger } from '../utils/logger';
 import { getPool } from '../db/pool';
 
@@ -22,9 +26,15 @@ const router = Router();
 // All manager routes require organizer authentication
 router.use(organizerAuthMiddleware);
 
+// Type guard for organizer requests
+type OrganizerHandler = (req: any, res: any, next: any) => any;
+const withWriteRate = (handler: OrganizerHandler): OrganizerHandler[] =>
+  [organizerWriteRateLimiter, handler as unknown as OrganizerHandler];
+
 // ── Offline Booking (Walk-in) ────────────────────────────────────────────────
 
 router.post('/organizations/:organizationId/offline-booking',
+  requireOrganizerPermission('organizer:offline_bookings:write'),
   async (req, res, next) => {
     try {
       const userId = req.organizerUser?.id;
@@ -37,7 +47,7 @@ router.post('/organizations/:organizationId/offline-booking',
 
       // Verify manager belongs to organization
       const orgUser = await getPool().query(
-        'SELECT id FROM organizer_users WHERE user_id = $1 AND organization_id = $2 AND is_active = true',
+        'SELECT id FROM organizer_users WHERE id = $1 AND organization_id = $2 AND is_active = true',
         [userId, orgId]
       );
       if (!orgUser.rows.length) throw new AppError('You do not manage this organization', 403);
@@ -74,9 +84,32 @@ router.post('/organizations/:organizationId/offline-booking',
         availability_unit_id: Number(availabilityUnitId),
         quantity,
         booking_type: 'offline',
+        amount: undefined,  // use server-calculated pricing
       }, { actorId: userId, actorType: 'manager' });
 
-      // Auto-confirm offline bookings
+      // ── Create payment_orders row and mark COMPLETED (offline/counter payment) ──
+      // confirmBooking requires a payment_orders row with status COMPLETED.
+      // We create one inline matching the movie offline booking pattern.
+      const orderId = `OFTF_${Date.now()}_${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+      const bookingAmount = parseFloat(booking.booking.amount);
+      await paymentOrderRepository.create({
+        order_id: orderId,
+        booking_id: booking.booking.id,
+        organization_id: orgId,
+        event_id: null,
+        amount: bookingAmount,
+        currency: 'INR',
+        idempotency_key: `turf_offline_pay_${booking.booking.id}`,
+        payment_gateway: 'offline',
+        financial_snapshot: null,
+      });
+      await paymentOrderRepository.updateFromWebhook(orderId, {
+        status: 'COMPLETED',
+        payment_method: 'offline_counter',
+        provider_payment_id: `manual_offline_${Date.now()}`,
+      });
+
+      // Confirm the booking (now that payment_orders row exists with COMPLETED)
       const confirmed = await turfBookingService.confirmBooking(booking.booking.id, {
         actorId: userId,
         actorType: 'manager',
@@ -98,6 +131,7 @@ router.post('/organizations/:organizationId/offline-booking',
 // ── Validate QR / Check-in ───────────────────────────────────────────────────
 
 router.post('/organizations/:organizationId/validate-qr',
+  requireOrganizerPermission('organizer:tickets:scan'),
   async (req: any, res: any, next: any) => {
     try {
       const userId = req.organizerUser?.id;
@@ -110,7 +144,7 @@ router.post('/organizations/:organizationId/validate-qr',
 
       // Verify manager belongs to organization
       const orgUser = await getPool().query(
-        'SELECT id FROM organizer_users WHERE user_id = $1 AND organization_id = $2 AND is_active = true',
+        'SELECT id FROM organizer_users WHERE id = $1 AND organization_id = $2 AND is_active = true',
         [userId, orgId]
       );
       if (!orgUser.rows.length) throw new AppError('You do not manage this organization', 403);
@@ -190,6 +224,7 @@ router.post('/organizations/:organizationId/validate-qr',
 // ── Manager Cancel Booking ───────────────────────────────────────────────────
 
 router.post('/organizations/:organizationId/bookings/:bookingId/cancel',
+  requireOrganizerPermission('organizer:bookings:cancel'),
   async (req, res, next) => {
     try {
       const userId = req.organizerUser?.id;
@@ -201,7 +236,7 @@ router.post('/organizations/:organizationId/bookings/:bookingId/cancel',
 
       // Verify manager belongs to organization
       const orgUser = await getPool().query(
-        'SELECT id FROM organizer_users WHERE user_id = $1 AND organization_id = $2 AND is_active = true',
+        'SELECT id FROM organizer_users WHERE id = $1 AND organization_id = $2 AND is_active = true',
         [userId, orgId]
       );
       if (!orgUser.rows.length) throw new AppError('You do not manage this organization', 403);
@@ -223,6 +258,7 @@ router.post('/organizations/:organizationId/bookings/:bookingId/cancel',
 // ── Attendance ───────────────────────────────────────────────────────────────
 
 router.get('/organizations/:organizationId/attendance',
+  requireOrganizerPermission('organizer:bookings:read'),
   async (req, res, next) => {
     try {
       const userId = req.organizerUser?.id;
@@ -233,7 +269,7 @@ router.get('/organizations/:organizationId/attendance',
 
       // Verify manager belongs to organization
       const orgUser = await getPool().query(
-        'SELECT id FROM organizer_users WHERE user_id = $1 AND organization_id = $2 AND is_active = true',
+        'SELECT id FROM organizer_users WHERE id = $1 AND organization_id = $2 AND is_active = true',
         [userId, orgId]
       );
       if (!orgUser.rows.length) throw new AppError('You do not manage this organization', 403);
@@ -244,9 +280,12 @@ router.get('/organizations/:organizationId/attendance',
 
       if (date) {
         const dayStart = `${date}T00:00:00Z`;
-        const dayEnd = `${date}T23:59:59Z`;
+        const nextDayStart = `${date}T00:00:00Z`;
+        const dt = new Date(date + 'T00:00:00Z');
+        dt.setUTCDate(dt.getUTCDate() + 1);
+        const dayEnd = dt.toISOString().slice(0, 19) + 'Z';
         where.push(`au.starts_at >= $${idx++}`); params.push(dayStart);
-        where.push(`au.starts_at <= $${idx++}`); params.push(dayEnd);
+        where.push(`au.starts_at < $${idx++}`); params.push(dayEnd);
       }
       if (venueId) { where.push(`b.venue_id = $${idx++}`); params.push(venueId); }
       if (resourceId) { where.push(`b.resource_id = $${idx++}`); params.push(resourceId); }
@@ -276,6 +315,7 @@ router.get('/organizations/:organizationId/attendance',
 // ── Daily Report ─────────────────────────────────────────────────────────────
 
 router.get('/organizations/:organizationId/daily-report',
+  requireOrganizerPermission('analytics:read'),
   async (req, res, next) => {
     try {
       const userId = req.organizerUser?.id;
@@ -288,13 +328,15 @@ router.get('/organizations/:organizationId/daily-report',
 
       // Verify manager belongs to organization
       const orgUser = await getPool().query(
-        'SELECT id FROM organizer_users WHERE user_id = $1 AND organization_id = $2 AND is_active = true',
+        'SELECT id FROM organizer_users WHERE id = $1 AND organization_id = $2 AND is_active = true',
         [userId, orgId]
       );
       if (!orgUser.rows.length) throw new AppError('You do not manage this organization', 403);
 
       const dayStart = `${date}T00:00:00Z`;
-      const dayEnd = `${date}T23:59:59Z`;
+      const dt = new Date(date + 'T00:00:00Z');
+      dt.setUTCDate(dt.getUTCDate() + 1);
+      const dayEnd = dt.toISOString().slice(0, 19) + 'Z';
 
       const [onlineResult, offlineResult] = await Promise.all([
         getPool().query(
@@ -328,6 +370,7 @@ router.get('/organizations/:organizationId/daily-report',
 // ── Entry Logs ───────────────────────────────────────────────────────────────
 
 router.get('/organizations/:organizationId/entry-logs',
+  requireOrganizerPermission('organizer:bookings:read'),
   async (req, res, next) => {
     try {
       const userId = req.organizerUser?.id;
@@ -338,7 +381,7 @@ router.get('/organizations/:organizationId/entry-logs',
 
       // Verify manager belongs to organization
       const orgUser = await getPool().query(
-        'SELECT id FROM organizer_users WHERE user_id = $1 AND organization_id = $2 AND is_active = true',
+        'SELECT id FROM organizer_users WHERE id = $1 AND organization_id = $2 AND is_active = true',
         [userId, orgId]
       );
       if (!orgUser.rows.length) throw new AppError('You do not manage this organization', 403);
@@ -349,7 +392,9 @@ router.get('/organizations/:organizationId/entry-logs',
 
       if (date) {
         where.push(`q.used_at >= $${idx++}`); params.push(`${date}T00:00:00Z`);
-        where.push(`q.used_at <= $${idx++}`); params.push(`${date}T23:59:59Z`);
+        const dt2 = new Date(date + 'T00:00:00Z');
+        dt2.setUTCDate(dt2.getUTCDate() + 1);
+        where.push(`q.used_at < $${idx++}`); params.push(dt2.toISOString().slice(0, 19) + 'Z');
       }
 
       const { rows } = await getPool().query(

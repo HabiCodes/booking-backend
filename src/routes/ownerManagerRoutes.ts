@@ -6,9 +6,11 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { organizerAuthMiddleware, type OrganizerRequest } from '../middleware/organizerAuth';
+import { organizerAuthMiddleware, revokeOrganizerSessionsRedis, type OrganizerRequest } from '../middleware/organizerAuth';
+import { requireOwner } from '../middleware/organizerPermissions';
 import { organizerUserRepository } from '../repositories/organizerUserRepository';
 import { auditLogRepository } from '../repositories/auditLogRepository';
+import { organizerRefreshTokenRepository } from '../repositories/organizerRefreshTokenRepository';
 import { managerAnalyticsService } from '../services/managerAnalyticsService';
 import { AppError } from '../middleware/errorHandler';
 import { hashPassword } from '../utils/crypto';
@@ -79,7 +81,7 @@ router.get('/managers/:id', async (req: OrganizerRequest, res: Response, next: N
 /**
  * POST /api/owner/managers
  */
-router.post('/managers', async (req: OrganizerRequest, res: Response, next: NextFunction) => {
+router.post('/managers', requireOwner, async (req: OrganizerRequest, res: Response, next: NextFunction) => {
   try {
     const orgId = req.organizerUser!.organizationId;
     const { email, name, phone, password, permissions } = req.body as {
@@ -116,7 +118,7 @@ router.post('/managers', async (req: OrganizerRequest, res: Response, next: Next
 /**
  * PATCH /api/owner/managers/:id
  */
-router.patch('/managers/:id', async (req: OrganizerRequest, res: Response, next: NextFunction) => {
+router.patch('/managers/:id', requireOwner, async (req: OrganizerRequest, res: Response, next: NextFunction) => {
   try {
     const managerId = parseInt(req.params.id, 10);
     const manager = await organizerUserRepository.findById(managerId);
@@ -146,7 +148,7 @@ router.patch('/managers/:id', async (req: OrganizerRequest, res: Response, next:
 /**
  * POST /api/owner/managers/:id/disable
  */
-router.post('/managers/:id/disable', async (req: OrganizerRequest, res: Response, next: NextFunction) => {
+router.post('/managers/:id/disable', requireOwner, async (req: OrganizerRequest, res: Response, next: NextFunction) => {
   try {
     const managerId = parseInt(req.params.id, 10);
     const manager = await organizerUserRepository.findById(managerId);
@@ -159,6 +161,11 @@ router.post('/managers/:id/disable', async (req: OrganizerRequest, res: Response
     }
 
     await organizerUserRepository.update(managerId, { is_active: false });
+    // Invalidate all existing JWT sessions via Redis (immediate effect)
+    await revokeOrganizerSessionsRedis(managerId);
+    // Also revoke all DB-level refresh tokens + sessions
+    await organizerRefreshTokenRepository.revokeAllUserRefreshTokens(managerId);
+    await organizerRefreshTokenRepository.revokeAllUserSessions(managerId);
     await audit(req, 'manager.disable', 'manager', managerId, { email: manager.email });
 
     res.json({ success: true, message: 'Manager access disabled' });
@@ -170,7 +177,7 @@ router.post('/managers/:id/disable', async (req: OrganizerRequest, res: Response
 /**
  * POST /api/owner/managers/:id/enable
  */
-router.post('/managers/:id/enable', async (req: OrganizerRequest, res: Response, next: NextFunction) => {
+router.post('/managers/:id/enable', requireOwner, async (req: OrganizerRequest, res: Response, next: NextFunction) => {
   try {
     const managerId = parseInt(req.params.id, 10);
     const manager = await organizerUserRepository.findById(managerId);
@@ -191,7 +198,7 @@ router.post('/managers/:id/enable', async (req: OrganizerRequest, res: Response,
 /**
  * POST /api/owner/managers/:id/reset-password
  */
-router.post('/managers/:id/reset-password', async (req: OrganizerRequest, res: Response, next: NextFunction) => {
+router.post('/managers/:id/reset-password', requireOwner, async (req: OrganizerRequest, res: Response, next: NextFunction) => {
   try {
     const managerId = parseInt(req.params.id, 10);
     const manager = await organizerUserRepository.findById(managerId);
@@ -218,7 +225,7 @@ router.post('/managers/:id/reset-password', async (req: OrganizerRequest, res: R
  * Soft-delete by anonymizing: keep financial/historical records intact
  * but remove PII.
  */
-router.delete('/managers/:id', async (req: OrganizerRequest, res: Response, next: NextFunction) => {
+router.delete('/managers/:id', requireOwner, async (req: OrganizerRequest, res: Response, next: NextFunction) => {
   try {
     const managerId = parseInt(req.params.id, 10);
     const manager = await organizerUserRepository.findById(managerId);

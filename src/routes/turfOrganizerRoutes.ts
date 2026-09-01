@@ -1,10 +1,18 @@
 /**
  * Turf organizer routes — authenticated organizer management.
- * Uses organizerAuthMiddleware (same as event organizer routes).
+ * Uses organizerAuthMiddleware + granular permission checks.
+ *
+ * All routes are scoped to the caller's organization_id.
+ * Owners get full access. Managers need explicit turf permissions.
  */
 
-import { Router } from 'express';
-import { organizerAuthMiddleware } from '../middleware/organizerAuth';
+import { Router, type NextFunction, type Request, type Response } from 'express';
+import {
+  requireOrganizerPermission,
+  requireOwner,
+} from '../middleware/organizerPermissions';
+import { organizerAuthMiddleware, type OrganizerRequest } from '../middleware/organizerAuth';
+import { organizerWriteRateLimiter } from '../middleware/rateLimiter';
 import {
   listVenues,
   createVenue,
@@ -26,36 +34,96 @@ import {
   createCoupon,
   listSettlements,
 } from '../controllers/turf/organizerController';
+import { AppError } from '../middleware/errorHandler';
 
 const router = Router();
 
 router.use(organizerAuthMiddleware);
 
-// Venues
-router.get('/venues', (req, res, next) => listVenues(req, res, next));
-router.post('/venues', (req, res, next) => createVenue(req, res, next));
-router.get('/venues/:venueId', (req, res, next) => getVenue(req, res, next));
-router.patch('/venues/:venueId', (req, res, next) => updateVenue(req, res, next));
-router.delete('/venues/:venueId', (req, res, next) => deleteVenue(req, res, next));
+// Permission check helper for turf routes
+function checkTurfPermission(req: OrganizerRequest, action: 'read' | 'write' | 'delete'): void {
+  const perms: Record<string, boolean> = req.organizerUser?.permissions || {};
+  const permKey = `organizer:turf:${action}`;
+  if (!perms[permKey]) {
+    throw new AppError(`Missing permission: ${permKey}`, 403);
+  }
+}
 
-// Resources
-router.post('/venues/:venueId/resources', (req, res, next) => createResource(req, res, next));
-router.get('/venues/:venueId/resources', (req, res, next) => listResources(req, res, next));
-router.get('/venues/:venueId/resources/:resourceId', (req, res, next) => getResource(req, res, next));
-router.patch('/venues/:venueId/resources/:resourceId', (req, res, next) => updateResource(req, res, next));
+type OrganizerHandler = (req: OrganizerRequest, res: Response, next: NextFunction) => any;
 
-// Slots
-router.get('/venues/:venueId/resources/:resourceId/slots', (req, res, next) => listSlots(req, res, next));
-router.post('/venues/:venueId/resources/:resourceId/slots', (req, res, next) => generateSlots(req, res, next));
+const withWriteRate = (handler: OrganizerHandler): OrganizerHandler[] =>
+  [organizerWriteRateLimiter, handler as unknown as OrganizerHandler];
 
-// Bookings
-router.get('/bookings', (req, res, next) => listOrgBookings(req, res, next));
+// ── Venues ────────────────────────────────────────────────────────────────────
 
-// Coupons
-router.get('/coupons', (req, res, next) => listCoupons(req, res, next));
-router.post('/coupons', (req, res, next) => createCoupon(req, res, next));
+router.get('/venues', requireOrganizerPermission('organizer:turf:read'), listVenues);
 
-// Settlements
-router.get('/settlements', (req, res, next) => listSettlements(req, res, next));
+router.post('/venues', ...withWriteRate((req: OrganizerRequest, res: Response, next: NextFunction) => {
+  try {
+    if (req.organizerUser!.role !== 'owner') checkTurfPermission(req, 'write');
+    createVenue(req, res, next);
+  } catch (err) { next(err); }
+}));
+
+router.get('/venues/:venueId', requireOrganizerPermission('organizer:turf:read'), getVenue);
+
+router.patch('/venues/:venueId', ...withWriteRate((req: OrganizerRequest, res: Response, next: NextFunction) => {
+  try {
+    if (req.organizerUser!.role !== 'owner') checkTurfPermission(req, 'write');
+    updateVenue(req, res, next);
+  } catch (err) { next(err); }
+}));
+
+router.delete('/venues/:venueId', requireOwner, deleteVenue);
+
+// ── Resources ─────────────────────────────────────────────────────────────────
+
+router.post('/venues/:venueId/resources', ...withWriteRate((req: OrganizerRequest, res: Response, next: NextFunction) => {
+  try {
+    if (req.organizerUser!.role !== 'owner') checkTurfPermission(req, 'write');
+    createResource(req, res, next);
+  } catch (err) { next(err); }
+}));
+
+router.get('/venues/:venueId/resources', requireOrganizerPermission('organizer:turf:read'), listResources);
+
+router.get('/venues/:venueId/resources/:resourceId', requireOrganizerPermission('organizer:turf:read'), getResource);
+
+router.patch('/venues/:venueId/resources/:resourceId', ...withWriteRate((req: OrganizerRequest, res: Response, next: NextFunction) => {
+  try {
+    if (req.organizerUser!.role !== 'owner') checkTurfPermission(req, 'write');
+    updateResource(req, res, next);
+  } catch (err) { next(err); }
+}));
+
+// ── Slots ─────────────────────────────────────────────────────────────────────
+
+router.get('/venues/:venueId/resources/:resourceId/slots', requireOrganizerPermission('organizer:turf:read'), listSlots);
+
+router.post('/venues/:venueId/resources/:resourceId/slots', ...withWriteRate((req: OrganizerRequest, res: Response, next: NextFunction) => {
+  try {
+    if (req.organizerUser!.role !== 'owner') checkTurfPermission(req, 'write');
+    generateSlots(req, res, next);
+  } catch (err) { next(err); }
+}));
+
+// ── Bookings ──────────────────────────────────────────────────────────────────
+
+router.get('/bookings', requireOrganizerPermission('organizer:turf:read'), listOrgBookings);
+
+// ── Coupons ────────────────────────────────────────────────────────────────────
+
+router.get('/coupons', requireOrganizerPermission('organizer:turf:read'), listCoupons);
+
+router.post('/coupons', ...withWriteRate((req: OrganizerRequest, res: Response, next: NextFunction) => {
+  try {
+    if (req.organizerUser!.role !== 'owner') checkTurfPermission(req, 'write');
+    createCoupon(req, res, next);
+  } catch (err) { next(err); }
+}));
+
+// ── Settlements (read-only, owner only) ──────────────────────────────────────
+
+router.get('/settlements', requireOwner, listSettlements);
 
 export { router as turfOrganizerRoutes };

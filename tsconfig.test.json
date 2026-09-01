@@ -6,7 +6,8 @@
     "noEmit": false,
     "declaration": false,
     "sourceMap": false,
-    "incremental": false
+    "incremental": false,
+    "module": "commonjs"
   },
   "include": ["src/**/*", "tests/**/*"],
   "exclude": ["node_modules", "dist", ".test-build", "src/seed"]

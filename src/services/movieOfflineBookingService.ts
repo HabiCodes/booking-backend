@@ -348,11 +348,13 @@ export class MovieOfflineBookingService {
 
     for (const item of bookingItems) {
       const ticketUuid = UniversalTicketService.generateTicketUuid('movie_manager');
+      // Bind the signature to the specific showtime to prevent cross-showtime QR replay
+      const showtimeStart = new Date(showtime.show_datetime || Date.now()).toISOString();
       const signature = UniversalTicketService.sign({
         domain: 'movie_manager',
         ticketUuid,
         entityId: booking.showtime_id,
-        startAt: '',
+        startAt: showtimeStart,
       });
 
       const qrData = JSON.stringify({

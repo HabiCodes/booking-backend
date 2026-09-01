@@ -7,9 +7,10 @@
 
 import { turfBookingService } from '../services/turfBookingService';
 import { availabilityEngine } from '../services/turfAvailabilityEngine';
+import { turfSettlementService } from '../services/turfSettlementService';
 import { logger } from '../utils/logger';
 
-export type TurfWorkerJob = 'expire' | 'complete' | 'all';
+export type TurfWorkerJob = 'expire' | 'complete' | 'settlement' | 'all';
 
 // ── Workers ────────────────────────────────────────────────────────────────────
 

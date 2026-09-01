@@ -33,6 +33,9 @@ export function signTicket(
   eventStartAt: string,
 ): string {
   const secret = config.bookings.qrSigningSecret;
+  if (!secret || secret.length === 0) {
+    throw new Error('QR_SIGNING_SECRET is not configured. All ticket signatures would be insecure. Set QR_SIGNING_SECRET to a random string (≥32 chars) before starting the server.');
+  }
   const payload = canonicalPayload(ticket, eventId, eventStartAt);
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }

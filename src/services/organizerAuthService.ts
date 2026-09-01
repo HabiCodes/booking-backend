@@ -21,6 +21,8 @@ import { organizerAppRepository } from '../repositories/organizerAppRepository';
 import { organizerRefreshTokenRepository } from '../repositories/organizerRefreshTokenRepository';
 import { hashToken } from '../utils/safeToken';
 import { logger } from '../utils/logger';
+import { computePermissions } from '../rbac/permissions';
+import { clearOrganizerRevocationRedis, revokeOrganizerSessionsRedis } from '../middleware/organizerAuth';
 import type {
   OrganizerUserRow,
   OrganizerUserPublic,
@@ -76,6 +78,9 @@ export class OrganizerAuthService {
     // Reset failed_login_attempts on successful login
     await organizerUserRepository.resetFailedLogin(user.id);
 
+    // Clear any prior Redis revocation flag (re-login after logout/deactivation)
+    await clearOrganizerRevocationRedis(Number(user.id));
+
     const result = await this.issueTokens(user);
     await organizerUserRepository.updateLastLogin(user.id);
 
@@ -86,13 +91,16 @@ export class OrganizerAuthService {
   // ── Token Issuance ─────────────────────────────────────────────────────────
 
   async issueTokens(user: OrganizerUserRow): Promise<OrganizerAuthResult> {
+    // Merge role defaults with any user-specific permission overrides from DB
+    const effectivePermissions = computePermissions(user.role, (user.permissions as Record<string, boolean>) || {});
+
     const payload: Record<string, unknown> = {
       id: Number(user.id),
       sub: user.email,
       organization_id: Number(user.organization_id),
       name: user.name,
       role: user.role,
-      permissions: (user.permissions as Record<string, boolean>) || {},
+      permissions: effectivePermissions,
       typ: 'organizer_access',
     };
 
@@ -168,12 +176,22 @@ export class OrganizerAuthService {
 
   async logoutCurrentDevice(refreshToken: string): Promise<void> {
     const tokenHash = hashToken(refreshToken);
+    // Look up session_id so we can revoke the specific JWT
+    const existing = await organizerRefreshTokenRepository.findRefreshTokenByHash(tokenHash);
+    if (existing?.session_id) {
+      await organizerRefreshTokenRepository.revokeSession(existing.session_id);
+      await organizerRefreshTokenRepository.revokeRefreshTokensBySessionId(existing.session_id);
+      // Also set user-wide flag as defense-in-depth
+      await revokeOrganizerSessionsRedis(existing.organizer_user_id);
+    }
     await organizerRefreshTokenRepository.revokeRefreshToken(tokenHash);
   }
 
   async logoutAllDevices(userId: number): Promise<{ revokedTokens: number; revokedSessions: number }> {
     const revokedTokens = await organizerRefreshTokenRepository.revokeAllUserRefreshTokens(userId);
     const revokedSessions = await organizerRefreshTokenRepository.revokeAllUserSessions(userId);
+    // Set Redis revocation flag so existing JWTs become invalid immediately
+    await revokeOrganizerSessionsRedis(userId);
     return { revokedTokens, revokedSessions };
   }
 

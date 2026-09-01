@@ -64,12 +64,26 @@ export interface ManagerAnalyticsResponse {
 export class ManagerAnalyticsService {
   async getManagerAnalytics(orgId: number, range?: { from?: string; to?: string }): Promise<ManagerAnalyticsResponse> {
     const pool = getPool();
-    const today = new Date().toISOString().slice(0, 10);
-    const from = range?.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const to = range?.to ?? today;
+
+    // Calendar-aware UTC boundaries (NOT T23:59:59 — that excludes the last second).
+    // "Today" end = next day at 00:00:00 UTC (half-open upper bound).
+    const todayUtc = new Date();
+    const todayStr = todayUtc.toISOString().slice(0, 10);
+    const from = range?.from ?? todayStr;
+    const to = range?.to ?? todayStr;
+
+    // Compute exclusive upper bound = next day after "to"
+    const toExclusiveDate = new Date(to + 'T00:00:00Z');
+    toExclusiveDate.setUTCDate(toExclusiveDate.getUTCDate() + 1);
+    const toExclusive = toExclusiveDate.toISOString().slice(0, 19) + 'Z';
+
     const fromTs = from + 'T00:00:00Z';
-    const toTs = to + 'T23:59:59Z';
+
+    // Week-ago: 7 days ago from "now" (timestamp)
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Today (UTC midnight to now)
+    const todayStart = todayStr + 'T00:00:00Z';
 
     const managersQuery = await pool.query(
       `SELECT
@@ -89,7 +103,7 @@ export class ManagerAnalyticsService {
        WHERE ou.organization_id = $1 AND ou.role = 'manager'
        GROUP BY ou.id, ou.name, ou.email, ou.role, ou.is_active, ou.last_login_at, ou.created_at, ou.assigned_venue_ids
        ORDER BY total_scans DESC`,
-      [orgId, fromTs, toTs, weekAgo]
+      [orgId, fromTs, toExclusive, weekAgo]
     );
 
     const managers: ManagerStats[] = managersQuery.rows.map((row: Record<string, unknown>) => {
@@ -129,7 +143,7 @@ export class ManagerAnalyticsService {
        WHERE ou.organization_id = $1
          AND ci.created_at >= $2::timestamptz AND ci.created_at < $3::timestamptz
        GROUP BY DATE(ci.created_at) ORDER BY date`,
-      [orgId, fromTs, toTs]
+      [orgId, fromTs, toExclusive]
     );
 
     const scanTrends: ScanTrendPoint[] = trendsQuery.rows.map((row: Record<string, unknown>) => ({

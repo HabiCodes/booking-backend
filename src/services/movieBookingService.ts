@@ -503,9 +503,13 @@ export class MovieBookingService {
       // Generate tickets atomically inside the transaction
       // If ticket creation fails, the entire confirmation rolls back
       const items = await movieBookingItemRepository.findByBooking(bookingId);
+      // Fetch the showtime start time to bind the ticket signature to this specific showtime
+      const showtimeRow = await client.query('SELECT show_datetime FROM showtimes WHERE id = $1 LIMIT 1', [booking.showtime_id]);
+      const showtimeStart = new Date(showtimeRow.rows[0]?.show_datetime || Date.now()).toISOString();
+
       const ticketData = items.map(item => {
         const ticketUuid = UniversalTicketService.generateTicketUuid('movie');
-        const signature = UniversalTicketService.sign({ domain: 'movie', ticketUuid, entityId: booking.showtime_id, startAt: '' });
+        const signature = UniversalTicketService.sign({ domain: 'movie', ticketUuid, entityId: booking.showtime_id, startAt: showtimeStart });
         const qrData = JSON.stringify({
           ref: booking.booking_reference,
           ticket: ticketUuid,
