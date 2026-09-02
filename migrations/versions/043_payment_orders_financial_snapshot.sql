@@ -30,14 +30,11 @@ BEGIN
   ) THEN
     ALTER TABLE payment_orders
       ADD COLUMN financial_snapshot JSONB DEFAULT NULL;
-
-    COMMENT ON COLUMN payment_orders.financial_snapshot IS
-      'Immutable PricingEngine output: domain, channel, base price, quantity, '
-      || 'subtotal, discount, taxable amount, CGST, SGST, GST total, '
-      || 'GST-inclusive, platform fee, final total, currency, rule version, '
-      || 'and calculation timestamp. Set at payment order creation.';
   END IF;
 END $$;
+
+COMMENT ON COLUMN payment_orders.financial_snapshot IS
+  'Immutable PricingEngine output: domain, channel, base price, quantity, subtotal, discount, taxable amount, CGST, SGST, GST total, GST-inclusive, platform fee, final total, currency, rule version, and calculation timestamp. Set at payment order creation.';
 
 CREATE INDEX IF NOT EXISTS idx_payment_orders_financial_snapshot
   ON payment_orders (financial_snapshot)

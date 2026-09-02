@@ -46,9 +46,7 @@ CREATE TABLE IF NOT EXISTS event_zones (
   deleted_at      TIMESTAMPTZ DEFAULT NULL,
 
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-  
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_event_zone_name

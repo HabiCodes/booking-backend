@@ -27,8 +27,7 @@ BEGIN
       WHERE organization_id IS NOT NULL;
 
     COMMENT ON COLUMN admins.organization_id IS
-      'Organization restriction for scanner access. NULL = super-admin (all orgs). '
-      || 'Non-NULL = restricted to that organization only.';
+      'Organization restriction for scanner access. NULL = super-admin (all orgs). Non-NULL = restricted to that organization only.';
   END IF;
 END $$;
 

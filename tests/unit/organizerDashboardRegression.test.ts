@@ -7,14 +7,13 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const ROOT = process.cwd();
-
-const SVC = readFileSync(join(ROOT, 'src', 'services', 'ownerDashboardService.ts'), 'utf-8');
-const ROUTES = readFileSync(join(ROOT, 'src', 'routes', 'turfManagerRoutes.ts'), 'utf-8');
-const MSVC = readFileSync(join(ROOT, 'src', 'services', 'managerAnalyticsService.ts'), 'utf-8');
+// Compiled test runs from .test-build/tests/unit/, so go up three levels for project root
+const SVC = readFileSync(resolve(__dirname, '../../..', 'src', 'services', 'ownerDashboardService.ts'), 'utf-8');
+const ROUTES = readFileSync(resolve(__dirname, '../../..', 'src', 'routes', 'turfManagerRoutes.ts'), 'utf-8');
+const MSVC = readFileSync(resolve(__dirname, '../../..', 'src', 'services', 'managerAnalyticsService.ts'), 'utf-8');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FIX 1 — util_agg CTE: COUNT(DISTINCT tau.id) prevents JOIN multiplication
@@ -192,17 +191,17 @@ describe('FIX 5 — Customer segments multi-domain', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('FIX 6 — Manager analytics default date is today', () => {
-  const MSVC = readFileSync(join(__dirname, '../../src/services/managerAnalyticsService.ts'), 'utf-8');
+  const MSVC_CHECK = readFileSync(resolve(__dirname, '../../..', 'src/services/managerAnalyticsService.ts'), 'utf-8');
 
   it('uses todayStr as default when no range provided', () => {
     assert.ok(
-      MSVC.includes('const from = range?.from ?? todayStr;'),
+      MSVC_CHECK.includes('const from = range?.from ?? todayStr;'),
       'Must default from date to todayStr'
     );
   });
 
   it('does NOT have yesterday variable for default range', () => {
-    assert.ok(!MSVC.includes('const yesterday'), 'No yesterday variable for default range');
+    assert.ok(!MSVC_CHECK.includes('const yesterday'), 'No yesterday variable for default range');
   });
 });
 

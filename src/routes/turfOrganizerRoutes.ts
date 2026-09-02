@@ -13,6 +13,7 @@ import {
 } from '../middleware/organizerPermissions';
 import { organizerAuthMiddleware, type OrganizerRequest } from '../middleware/organizerAuth';
 import { organizerWriteRateLimiter } from '../middleware/rateLimiter';
+import { requireVenueAccess } from '../middleware/venueAccess';
 import {
   listVenues,
   createVenue,
@@ -65,7 +66,7 @@ router.post('/venues', ...withWriteRate((req: OrganizerRequest, res: Response, n
   } catch (err) { next(err); }
 }));
 
-router.get('/venues/:venueId', requireOrganizerPermission('organizer:turf:read'), getVenue);
+router.get('/venues/:venueId', requireVenueAccess(), getVenue);
 
 router.patch('/venues/:venueId', ...withWriteRate((req: OrganizerRequest, res: Response, next: NextFunction) => {
   try {
@@ -74,7 +75,7 @@ router.patch('/venues/:venueId', ...withWriteRate((req: OrganizerRequest, res: R
   } catch (err) { next(err); }
 }));
 
-router.delete('/venues/:venueId', requireOwner, deleteVenue);
+router.delete('/venues/:venueId', requireOwner, requireVenueAccess(), deleteVenue);
 
 // ── Resources ─────────────────────────────────────────────────────────────────
 
@@ -85,9 +86,9 @@ router.post('/venues/:venueId/resources', ...withWriteRate((req: OrganizerReques
   } catch (err) { next(err); }
 }));
 
-router.get('/venues/:venueId/resources', requireOrganizerPermission('organizer:turf:read'), listResources);
+router.get('/venues/:venueId/resources', requireVenueAccess(), listResources);
 
-router.get('/venues/:venueId/resources/:resourceId', requireOrganizerPermission('organizer:turf:read'), getResource);
+router.get('/venues/:venueId/resources/:resourceId', requireVenueAccess(), getResource);
 
 router.patch('/venues/:venueId/resources/:resourceId', ...withWriteRate((req: OrganizerRequest, res: Response, next: NextFunction) => {
   try {
@@ -98,7 +99,7 @@ router.patch('/venues/:venueId/resources/:resourceId', ...withWriteRate((req: Or
 
 // ── Slots ─────────────────────────────────────────────────────────────────────
 
-router.get('/venues/:venueId/resources/:resourceId/slots', requireOrganizerPermission('organizer:turf:read'), listSlots);
+router.get('/venues/:venueId/resources/:resourceId/slots', requireVenueAccess(), listSlots);
 
 router.post('/venues/:venueId/resources/:resourceId/slots', ...withWriteRate((req: OrganizerRequest, res: Response, next: NextFunction) => {
   try {

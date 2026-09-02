@@ -10,14 +10,30 @@
 
 import { getPool, closePool } from '../src/db/pool';
 
+async function hashPassword(password: string): Promise<string> {
+  const bcrypt = await import('bcrypt');
+  return bcrypt.hash(password, 12);
+}
+
 async function seed(): Promise<void> {
   const pool = getPool();
+
+  const adminHash = await hashPassword('testpass123');
 
   // 1. Admin (id=1) — required by adminAuthMiddleware
   await pool.query(
     `INSERT INTO admins (id, email, password_hash, name, role, is_active, permissions_updated_at)
-     VALUES (1, 'admin@test.com', crypt('testpass123', gen_salt('bf')), 'Test Admin', 'super_admin', true, NOW())
-     ON CONFLICT (id) DO UPDATE SET is_active = true`,
+     VALUES ($1, $2, $3, 'Test Admin', 'super_admin', true, NOW())
+     ON CONFLICT (id) DO UPDATE SET is_active = true, email = EXCLUDED.email, role = EXCLUDED.role`,
+    [1, 'admin@test.com', adminHash],
+  );
+
+  // 1b. Customer user — required by authService tests (findByEmail)
+  await pool.query(
+    `INSERT INTO users (id, email, password_hash, is_verified, is_active)
+     VALUES ($1, $2, $3, true, true)
+     ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email`,
+    [1, 'admin@test.com', adminHash],
   );
 
   // 2. Organization (id=1) — required by organizer_users FK
@@ -28,12 +44,14 @@ async function seed(): Promise<void> {
   );
 
   // 3. Organizer users (id=2,3) — required by organizerAuthMiddleware tests
+  const orgHash = await hashPassword('testpass123');
   await pool.query(
     `INSERT INTO organizer_users (id, organization_id, email, password_hash, name, role, permissions, is_active)
      VALUES
-       (2, 1, 'owner@test.com', crypt('testpass123', gen_salt('bf')), 'Test Owner', 'owner', '{}', true),
-       (3, 1, 'org@example.com', crypt('testpass123', gen_salt('bf')), 'Test Org', 'owner', '{}', true)
+       ($1, $2, $3, $4, 'Test Owner', 'owner', '{}', true),
+       ($5, $2, $6, $7, 'Test Org', 'owner', '{}', true)
      ON CONFLICT (id) DO UPDATE SET is_active = true`,
+    [2, 1, 'owner@test.com', orgHash, 3, 'org@example.com', orgHash],
   );
 
   await closePool();

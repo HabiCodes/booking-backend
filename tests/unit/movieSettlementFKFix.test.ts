@@ -301,7 +301,7 @@ describe('Movie settlement FK fix — DB adversarial tests', () => {
       const { rows } = await dbPool.query(`
         SELECT indexname FROM pg_indexes
         WHERE tablename = 'movie_settlement_items'
-          AND indexdef LIKE '%booking_id%UNIQUE%'
+          AND indexdef LIKE '%UNIQUE%booking_id%'
       `);
       assert.ok(rows.length >= 1, 'Must have unique index on booking_id');
     });

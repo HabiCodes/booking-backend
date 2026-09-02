@@ -111,7 +111,7 @@ export class TurfBookingRepository {
     return { items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) || 1 };
   }
 
-  async findByOrganization(orgId: number, filters: { status?: string; page?: number; pageSize?: number }): Promise<{ items: TurfBookingPublic[]; total: number; page: number; pageSize: number; totalPages: number }> {
+  async findByOrganization(orgId: number, filters: { status?: string; page?: number; pageSize?: number; assignedVenueIds?: number[] }): Promise<{ items: TurfBookingPublic[]; total: number; page: number; pageSize: number; totalPages: number }> {
     const page = filters.page || 1;
     const pageSize = Math.min(filters.pageSize || 20, 100);
     const offset = (page - 1) * pageSize;
@@ -119,6 +119,10 @@ export class TurfBookingRepository {
     const params: unknown[] = [orgId];
     let idx = 2;
     if (filters.status) { where.push(`b.status = $${idx++}`); params.push(filters.status); }
+    if (filters.assignedVenueIds && filters.assignedVenueIds.length > 0) {
+      where.push(`b.venue_id = ANY($${idx++})`);
+      params.push(filters.assignedVenueIds);
+    }
     const whereStr = `WHERE ${where.join(' AND ')}`;
     const { rows: countRows } = await getPool().query(`SELECT COUNT(*) FROM turf_bookings b ${whereStr}`, params);
     const total = Number((countRows as Array<{ count: string | number }>)[0]?.count ?? 0);

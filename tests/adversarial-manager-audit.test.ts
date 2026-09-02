@@ -14,7 +14,7 @@ import { join } from 'path';
 
 import { config } from '../src/config';
 import { UniversalTicketService } from '../src/services/universalTicketService';
-import { computePermissions } from '../src/rbac/permissions';
+import { computePermissions, PERMISSIONS } from '../src/rbac/permissions';
 import type { PaymentGateway } from '../src/types';
 
 const ROOT = process.cwd();
@@ -53,10 +53,9 @@ describe('AUTH-1 & AUTH-3: JWT structure and permission computation', () => {
     assert.strictEqual(result['events:write'], true, 'role default preserved when not overridden');
   });
 
-  it('computePermissions falls back to event_manager for unknown roles', () => {
+  it('computePermissions returns empty permissions for unknown roles (deny by default)', () => {
     const result = computePermissions('nonexistent_role', {});
-    assert.ok(result['events:read'], 'unknown role gets event_manager defaults');
-    assert.ok(result['events:write'], 'unknown role gets event_manager defaults');
+    assert.deepStrictEqual(result, Object.fromEntries(PERMISSIONS.map(p => [p, false])));
   });
 
   it('issueTokens calls computePermissions (source verification)', async () => {

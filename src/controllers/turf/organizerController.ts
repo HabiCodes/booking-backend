@@ -12,7 +12,11 @@ import { turfSettlementService } from '../../services/turfSettlementService';
 export async function listOrgBookings(req: Request, res: Response, next: NextFunction) {
   try {
     const orgId = (req as any).organizerUser?.organizationId;
-    const result = await turfBookingRepository.findByOrganization(orgId, req.query as any);
+    const assignedVenueIds = (req as any).organizerUser?.assignedVenueIds || [];
+    const result = await turfBookingRepository.findByOrganization(orgId, {
+      ...(req.query as any),
+      assignedVenueIds,
+    });
     res.json({ success: true, data: result });
   } catch (err) { next(err); }
 }
@@ -20,7 +24,8 @@ export async function listOrgBookings(req: Request, res: Response, next: NextFun
 export async function listOrgVenues(req: Request, res: Response, next: NextFunction) {
   try {
     const orgId = (req as any).organizerUser?.organizationId;
-    const venues = await turfVenueService.listByOrganization(orgId);
+    const assignedVenueIds = (req as any).organizerUser?.assignedVenueIds || [];
+    const venues = await turfVenueService.listByOrganization(orgId, assignedVenueIds);
     res.json({ success: true, data: venues });
   } catch (err) { next(err); }
 }

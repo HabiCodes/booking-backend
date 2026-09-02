@@ -503,8 +503,18 @@ export class TurfBookingService {
 
   /**
    * Manager check-in with QR token validation.
+   *
+   * @param managerVenueIds — when provided, enforces that booking.venue_id is in this list.
+   *   Pass the manager's assignedVenueIds from req.organizerUser.assignedVenueIds for
+   *   defense-in-depth venue boundary enforcement (the route handler already checks this,
+   *   but the service layer adds protection against future callers skipping the route).
    */
-  async checkInBooking(bookingId: number, qrToken: string, actor: { actorId: number; actorType: string }) {
+  async checkInBooking(
+    bookingId: number,
+    qrToken: string,
+    actor: { actorId: number; actorType: string },
+    managerVenueIds?: number[],
+  ) {
     const pool = getPool();
     const client = await pool.connect();
 
@@ -515,6 +525,12 @@ export class TurfBookingService {
       if (!booking) {
         await client.query('ROLLBACK');
         throw new AppError('Booking not found', 404);
+      }
+
+      // Enforce assigned_venue_ids boundary when manager data is provided
+      if (managerVenueIds && managerVenueIds.length > 0 && !managerVenueIds.includes(booking.venue_id)) {
+        await client.query('ROLLBACK');
+        throw new AppError('You do not have access to this venue', 403);
       }
 
       assertTransition(booking.status, TURF_BOOKING_STATES.CHECKED_IN);

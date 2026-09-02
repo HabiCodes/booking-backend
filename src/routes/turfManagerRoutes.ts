@@ -201,7 +201,7 @@ router.post('/organizations/:organizationId/validate-qr',
         updated = await turfBookingService.checkInBooking(booking.id, token, {
           actorId: userId,
           actorType: 'manager',
-        });
+        }, req.organizerUser!.assignedVenueIds);
       } catch (checkInErr) {
         const reason = (checkInErr instanceof AppError)
           ? checkInErr.message

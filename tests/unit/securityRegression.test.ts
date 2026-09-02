@@ -185,7 +185,7 @@ describe('P1 — Password reset rate limiter', () => {
       } as any;
       const next = () => { passed++; };
 
-      strictLimiter({ ip: '10.0.0.2', body: {}, headers: {} } as any, res, next);
+      await strictLimiter({ ip: '10.0.0.2', body: {}, headers: {} } as any, res, next);
     }
 
     assert.ok(rejected > 0, `Expected rejections, got ${rejected}`);

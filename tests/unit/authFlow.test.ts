@@ -21,7 +21,7 @@
  * available in this environment. Utility-level tests run synchronously.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import jwt from 'jsonwebtoken';
 
@@ -339,6 +339,20 @@ describe('auth > token hashing', () => {
 // ============================================================================
 
 describe('auth > AuthService registration', () => {
+  let pool: any;
+  before(async () => {
+    const { getPool } = await import('../../src/db/pool');
+    pool = getPool();
+    const { hashSync } = await import('bcrypt');
+    const hash = hashSync('testpass123', 12);
+    await pool.query(
+      `INSERT INTO users (id, email, password_hash, is_verified, is_active)
+       VALUES ($1, $2, $3, true, true)
+       ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email`,
+      [1, 'admin@test.com', hash],
+    );
+  });
+
   it('requestRegistrationOtp rejects already-registered emails', async () => {
     const { authService } = await import('../../src/services/authService');
     try {
@@ -382,6 +396,14 @@ describe('auth > AuthService registration', () => {
 // ============================================================================
 
 describe('auth > AuthService login', () => {
+  let pool: any;
+  before(async () => {
+    const { getPool } = await import('../../src/db/pool');
+    pool = getPool();
+    // Clear accumulated login_attempts from prior runs to prevent lockout cascade
+    await pool.query("DELETE FROM login_attempts WHERE email = 'admin@test.com'");
+  });
+
   it('rejects login with non-existent email', async () => {
     const { authService } = await import('../../src/services/authService');
     try {

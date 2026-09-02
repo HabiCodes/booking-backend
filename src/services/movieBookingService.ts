@@ -289,9 +289,14 @@ export class MovieBookingService {
       } as unknown as PricingBreakdown;
     }
 
-    // Idempotency check
+    // Idempotency check (Redis fast-path, DB is authoritative)
     const idempotencyKey = input.idempotencyKey || generateIdempotencyKey(userId, showtimeId);
-    const cached = await getRedis().get(`movie:idempotency:${idempotencyKey}`);
+    let cached: string | null = null;
+    try {
+      cached = await getRedis().get(`movie:idempotency:${idempotencyKey}`);
+    } catch {
+      // Redis unavailable — continue; the DB transaction below has SELECT FOR UPDATE
+    }
     if (cached) {
       const data = JSON.parse(cached);
       const existing = await movieBookingRepository.findById(data.bookingId);
@@ -407,15 +412,18 @@ export class MovieBookingService {
       throw new AppError('Payment order creation failed', 500);
     }
 
-    // Cache idempotency
-    await getRedis().set(`movie:idempotency:${idempotencyKey}`, JSON.stringify({ bookingId: booking.id }), 'EX', PAYMENT_TIMEOUT_SECONDS + 60);
+    // Cache idempotency + extend hold TTL (best-effort; seat holds expire via TTL)
+    try {
+      await getRedis().set(`movie:idempotency:${idempotencyKey}`, JSON.stringify({ bookingId: booking.id }), 'EX', PAYMENT_TIMEOUT_SECONDS + 60);
+    } catch { /* best-effort */ }
 
-    // Extend seat hold TTL to match payment window
-    const holdKey = `movie:hold:${showtimeId}`;
-    for (const seatId of seatIds) {
-      await getRedis().expire(`${holdKey}:${seatId}`, PAYMENT_TIMEOUT_SECONDS);
-    }
-    await getRedis().expire(`movie:user_hold:${userId}:${showtimeId}`, PAYMENT_TIMEOUT_SECONDS);
+    try {
+      const holdKey = `movie:hold:${showtimeId}`;
+      for (const seatId of seatIds) {
+        await getRedis().expire(`${holdKey}:${seatId}`, PAYMENT_TIMEOUT_SECONDS);
+      }
+      await getRedis().expire(`movie:user_hold:${userId}:${showtimeId}`, PAYMENT_TIMEOUT_SECONDS);
+    } catch { /* best-effort — TTL-based expiry is primary mechanism */ }
 
     await audit(booking.id, 'booking.created', {
       actorType: 'user', actorId: userId,
@@ -535,18 +543,20 @@ export class MovieBookingService {
 
       await client.query('COMMIT');
 
-      // Post-commit: Release Redis holds (safe to do after commit — holds already locked)
-      const showtime = await showtimeRepository.findById(booking.showtime_id);
-      if (showtime) {
-        const holdKey = `movie:hold:${showtime.id}`;
-        for (const item of items) {
-          await getRedis().del(`${holdKey}:${item.seat_id}`);
+      // Post-commit: Release Redis holds (best-effort — holds expire via TTL)
+      try {
+        const showtime = await showtimeRepository.findById(booking.showtime_id);
+        if (showtime) {
+          const holdKey = `movie:hold:${showtime.id}`;
+          for (const item of items) {
+            try { await getRedis().del(`${holdKey}:${item.seat_id}`); } catch { /* best-effort */ }
+          }
+          try { await getRedis().del(`movie:user_hold:${booking.user_id}:${showtime.id}`); } catch { /* best-effort */ }
+          if (booking.idempotency_key) {
+            try { await getRedis().del(`movie:idempotency:${booking.idempotency_key}`); } catch { /* best-effort */ }
+          }
         }
-        await getRedis().del(`movie:user_hold:${booking.user_id}:${showtime.id}`);
-        if (booking.idempotency_key) {
-          await getRedis().del(`movie:idempotency:${booking.idempotency_key}`);
-        }
-      }
+      } catch { /* best-effort */ }
 
       // Post-commit: Settlement
       // Use base subtotal from financial snapshot (pre-GST, pre-platform-fee)
@@ -609,15 +619,17 @@ export class MovieBookingService {
         items.length
       );
 
-      // Release Redis holds
-      const holdKey = `movie:hold:${booking.showtime_id}`;
-      for (const item of items) {
-        await getRedis().del(`${holdKey}:${item.seat_id}`);
-      }
-      await getRedis().del(`movie:user_hold:${userId}:${booking.showtime_id}`);
-      if (booking.idempotency_key) {
-        await getRedis().del(`movie:idempotency:${booking.idempotency_key}`);
-      }
+      // Release Redis holds (best-effort — TTL-based expiry is the safety net)
+      try {
+        const holdKey = `movie:hold:${booking.showtime_id}`;
+        for (const item of items) {
+          try { await getRedis().del(`${holdKey}:${item.seat_id}`); } catch { /* best-effort */ }
+        }
+        try { await getRedis().del(`movie:user_hold:${userId}:${booking.showtime_id}`); } catch { /* best-effort */ }
+        if (booking.idempotency_key) {
+          try { await getRedis().del(`movie:idempotency:${booking.idempotency_key}`); } catch { /* best-effort */ }
+        }
+      } catch { /* best-effort */ }
 
       // Delete booking items
       await movieBookingItemRepository.deleteByBooking(bookingId);

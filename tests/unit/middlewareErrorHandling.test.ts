@@ -532,10 +532,12 @@ async function seedTestAccounts(): Promise<void> {
   // ── Admin (id=1) — required by adminAuthMiddleware tests ──
   let adminResult;
   try {
+    const adminHash = (await import('bcrypt')).hashSync('testpass123', 12);
     adminResult = await pool.query(
       `INSERT INTO admins (id, email, password_hash, name, role, is_active, permissions_updated_at)
-       VALUES (1, 'admin@test.com', crypt('testpass123', gen_salt('bf')), 'Test Admin', 'super_admin', true, NOW())
+       VALUES ($1, $2, $3, 'Test Admin', 'super_admin', true, NOW())
        ON CONFLICT (id) DO UPDATE SET is_active = true, email = EXCLUDED.email, role = EXCLUDED.role`,
+      [1, 'admin@test.com', adminHash],
     );
   } catch (err) {
     throw new Error(`[seed] Failed to insert admin: ${(err as Error).message}`);
@@ -555,18 +557,22 @@ async function seedTestAccounts(): Promise<void> {
   }
 
   // ── Organizer users (id=2, 3) — required by organizerAuthMiddleware tests ──
+  // One owner + one manager (DB constraint allows only one owner per org).
   let organizerResult;
   try {
+    const orgHash = (await import('bcrypt')).hashSync('testpass123', 12);
     organizerResult = await pool.query(
       `INSERT INTO organizer_users (id, organization_id, email, password_hash, name, role, permissions, is_active)
        VALUES
-         (2, 1, 'owner@test.com', crypt('testpass123', gen_salt('bf')), 'Test Owner', 'owner', '{}', true),
-         (3, 1, 'org@example.com', crypt('testpass123', gen_salt('bf')), 'Test Org', 'owner', '{}', true)
+         ($1, $2, $3, $4, 'Test Owner', 'owner', '{}', true),
+         ($5, $2, $6, $7, 'Test Manager', 'manager', '{}', true)
        ON CONFLICT (id) DO UPDATE SET
          is_active = true,
          organization_id = EXCLUDED.organization_id,
          email = EXCLUDED.email,
-         name = EXCLUDED.name`,
+         name = EXCLUDED.name,
+         role = EXCLUDED.role`,
+      [2, 1, 'owner@test.com', orgHash, 3, 'org@example.com', orgHash],
     );
   } catch (err) {
     throw new Error(`[seed] Failed to insert organizer users: ${(err as Error).message}`);

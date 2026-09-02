@@ -84,10 +84,9 @@ describe('computePermissions', () => {
     }
   });
 
-  it('falls back to event_manager permissions for an unknown role', () => {
-    const expected = computePermissions('event_manager', undefined);
+  it('returns empty permissions for an unknown role (deny by default)', () => {
     const result = computePermissions('nonexistent_role', undefined);
-    assert.deepStrictEqual(result, expected);
+    assert.deepStrictEqual(result, Object.fromEntries(PERMISSIONS.map(p => [p, false])));
   });
 
   it('grants role defaults when override is absent', () => {

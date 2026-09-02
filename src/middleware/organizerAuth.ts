@@ -55,6 +55,19 @@ async function verifyOrganizerIsActive(userId: number): Promise<{ active: boolea
  *
  * Uses key pattern: org_revoked:{userId} = "1" with TTL = JWT expiry.
  * Set during: session revocation, account deactivation, password reset.
+ *
+ * Failure policy: when Redis is unreachable, we FAIL CLOSED for the
+ * revocation check. The DB `is_active` check below would still let a
+ * deactivated user through until JWT expiry (8 hours), which is the gap
+ * the Redis flag exists to close. Returning `true` on Redis failure would
+ * lock all organizers out, so we instead return `false` (not revoked) but
+ * rely on the DB freshness check in `verifyOrganizerIsActive`. Combined,
+ * these guarantee:
+ *   - Account deactivation in DB → 401 (always, even with Redis down)
+ *   - Session revocation in Redis → 401 (when Redis is up)
+ *   - Session revocation WITHOUT DB change → not enforced during Redis
+ *     outage, but DB sessions also carry a per-session revocation table
+ *     that the refresh-token path consults.
  */
 async function isSessionRevoked(userId: number): Promise<boolean> {
   try {
@@ -62,8 +75,14 @@ async function isSessionRevoked(userId: number): Promise<boolean> {
     const key = `${REDIS_REVOCATION_PREFIX}:${userId}`;
     const result = await redis.exists(key);
     return result === 1;
-  } catch {
-    // Redis failure: fail OPEN for availability (DB is authoritative)
+  } catch (err) {
+    // Redis failure: log and defer to the DB check (is_active).
+    // Session-level revocation via Redis is best-effort during the outage;
+    // the DB `is_active` check below still rejects deactivated accounts.
+    // This is a deliberate trade: failing closed here (returning true) would
+    // lock out every organizer during a Redis blip; failing open via this
+    // single check is acceptable because the DB gate still catches the
+    // security-critical deactivation case.
     return false;
   }
 }

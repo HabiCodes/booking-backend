@@ -6,6 +6,7 @@ import { turfVenueRepository } from '../repositories/turfVenueRepository';
 import { turfResourceRepository } from '../repositories/turfResourceRepository';
 import { turfResourceRepository as repo } from '../repositories/turfResourceRepository';
 import { AppError } from '../middleware/errorHandler';
+import type { TurfVenueRow } from '../types';
 import type { TurfResourceCreateInput } from '../types';
 
 export class TurfVenueService {
@@ -13,8 +14,12 @@ export class TurfVenueService {
     return turfVenueRepository.create({ ...input, organization_id: organizationId });
   }
 
-  async listByOrganization(organizationId: number) {
-    return turfVenueRepository.findByOrganization(organizationId);
+  async listByOrganization(organizationId: number, assignedVenueIds?: number[]): Promise<TurfVenueRow[]> {
+    let venues = turfVenueRepository.findByOrganization(organizationId);
+    if (assignedVenueIds && assignedVenueIds.length > 0) {
+      venues = venues.then(all => all.filter(v => assignedVenueIds.includes(v.id)));
+    }
+    return venues;
   }
 
   async findPublic(query: { category?: string; city?: string; page?: number; pageSize?: number }) {
